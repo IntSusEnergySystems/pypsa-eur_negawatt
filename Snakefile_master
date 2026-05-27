@@ -1,0 +1,65 @@
+from snakemake.utils import min_version
+
+min_version("8.5")
+
+rule run_snakefile_ref:
+    output: touch("run_snakefile_ref.done")
+    log: "logs/run_snakefile_ref.done",
+    shell:
+        "snakemake --snakefile Snakefile_ref --cores 1 -call all"
+
+rule run_snakefile_suff:
+    input: "run_snakefile_ref.done"
+    output: touch("run_snakefile_suff.done")
+    log: "logs/run_snakefile_suff.done",
+    shell:
+        "snakemake --snakefile Snakefile_suff --cores 1 -call all"
+
+
+rule run_all_snakefiles:
+    input: "run_snakefile_suff.done"
+
+configfile: 'config/config_suff.yaml'
+configfile: 'config/plotting.default.yaml'
+        
+rule run_prepare_scenarios:
+    input: "run_snakefile_suff.done"
+    output: touch("run_prepare_scenarios.done")
+    log: "logs/run_prepare_scenarios.done"
+    shell:
+        "snakemake --snakefile Snakefile_master --cores 1 -call prepare_scenarios"
+local_countries = config["countries"].copy()
+if "EU" not in local_countries:
+    local_countries.append("EU") 
+rule prepare_scenarios:
+    params:
+        countries = config["countries"],
+    input:
+        cap_files_ref=expand("results/ref/country_csvs/{country}_capacities.csv", country=local_countries),
+        cost_files_ref=expand("results/ref/country_csvs/{country}_costs.csv", country=local_countries),
+        dem_files_ref=expand("results/ref/country_csvs/{country}_sectordemands.csv", country=local_countries),
+        cap_files_suff=expand("results/suff/country_csvs/{country}_capacities.csv", country=local_countries),
+        cost_files_suff=expand("results/suff/country_csvs/{country}_costs.csv", country=local_countries),
+        dem_files_suff=expand("results/suff/country_csvs/{country}_sectordemands.csv", country=local_countries),
+        sepia_config = "SEPIA/SEPIA_config.xlsx",
+        file_path = "SEPIA/html_texts.txt", 
+        template = "SEPIA/Template/pypsa.html",
+        plots_html = "config/plots.yaml", 
+        
+    output:
+        htmlfile=expand("results/scenario_results/{country}_combined_scenario_chart.html", country=local_countries),
+    threads: 1
+    resources:
+        mem_mb=10000,
+    log:
+        "logs/scenario_results.log",
+    benchmark:
+        "benchmarks/scenario_results",
+    conda:
+        "envs/environment.yaml"
+    script:
+        "SEPIA/scenario_results.py"
+        
+rule run_all_scenarios:
+    input: "run_prepare_scenarios.done"
+

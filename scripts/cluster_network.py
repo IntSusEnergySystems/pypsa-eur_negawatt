@@ -409,9 +409,9 @@ def clustering_for_n_clusters(
     if aggregation_strategies is None:
         aggregation_strategies = dict()
 
-    line_strategies = dict(aggregation_strategies.get("lines", {}))
+    line_strategies = aggregation_strategies.get("lines", dict())
 
-    bus_strategies = dict(aggregation_strategies.get("buses", {}))
+    bus_strategies = aggregation_strategies.get("buses", dict())
     bus_strategies.setdefault("substation_lv", lambda x: bool(x.sum()))
     bus_strategies.setdefault("substation_off", lambda x: bool(x.sum()))
 
@@ -659,6 +659,14 @@ if __name__ == "__main__":
             ).squeeze()
             custom_busmap.index = custom_busmap.index.astype(str)
             logger.info(f"Imported custom busmap from {snakemake.input.custom_busmap}")
+            busmap = custom_busmap
+        elif mode in {"custom_busmap", "custom_busmap_BE"}:
+            input_key = "custom_busmap" if mode == "custom_busmap" else "custom_busmap_BE"
+            custom_busmap = pd.read_csv(
+                snakemake.input[input_key], index_col=0
+            ).squeeze()
+            custom_busmap.index = custom_busmap.index.astype(str)
+            logger.info(f"Imported custom busmap from {snakemake.input[input_key]}")
             busmap = custom_busmap
         else:
             n_clusters = int(snakemake.wildcards.clusters)

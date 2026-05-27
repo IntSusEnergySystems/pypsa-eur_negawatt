@@ -153,27 +153,6 @@ def path_provider(dir, rdir, shared_resources, exclude_from_shared):
     )
 
 
-def script_path_provider(project_dir: Path) -> Callable[[str], Path]:
-    """
-    Returns a function that provides the full path to a script given its name.
-
-    Parameters
-    ----------
-    project_dir : Path
-        The root directory of the project (where the script directory is located).
-
-    Returns
-    -------
-    Callable[[str], Path]
-        A function that takes a script name as input and returns the full path to the script.
-    """
-
-    def _get_script_path(script: str) -> Path:
-        return Path("file://") / project_dir / "scripts" / script
-
-    return _get_script_path
-
-
 def get_shadow(run):
     """
     Returns 'shallow' or None depending on the user setting.
@@ -396,21 +375,21 @@ def aggregate_costs(n, flatten=False, opts=None, existing_only=False):
 
     costs = {}
     for c, (p_nom, p_attr) in zip(
-        n.components[list(components.keys())], components.values()
+        n.iterate_components(components.keys(), skip_empty=False), components.values()
     ):
-        if c.static.empty:
+        if c.df.empty:
             continue
         if not existing_only:
             p_nom += "_opt"
         costs[(c.list_name, "capital")] = (
-            (c.static[p_nom] * c.static.capital_cost).groupby(c.static.carrier).sum()
+            (c.df[p_nom] * c.df.capital_cost).groupby(c.df.carrier).sum()
         )
         if p_attr is not None:
-            p = c.dynamic[p_attr].sum()
+            p = c.pnl[p_attr].sum()
             if c.name == "StorageUnit":
                 p = p.loc[p > 0]
             costs[(c.list_name, "marginal")] = (
-                (p * c.static.marginal_cost).groupby(c.static.carrier).sum()
+                (p * c.df.marginal_cost).groupby(c.df.carrier).sum()
             )
     costs = pd.concat(costs)
 
@@ -712,7 +691,7 @@ def update_config_from_wildcards(config, w, inplace=True):
                 config["electricity"]["gaslimit"] = gasl_value * 1e6
 
         if "Ept" in opts:
-            config["costs"]["emission_prices"]["dynamic"] = True
+            config["costs"]["emission_prices"]["co2_monthly_prices"] = True
 
         ep_enable, ep_value = find_opt(opts, "Ep")
         if ep_enable:

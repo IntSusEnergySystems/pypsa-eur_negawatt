@@ -198,8 +198,7 @@ if __name__ == "__main__":
     if norm_year:
         eia_stats.loc[years_in_time] = eia_stats.loc[norm_year]
     elif missing_years.any():
-        for year in missing_years:
-            eia_stats.loc[year] = eia_stats.median()
+        eia_stats.loc[missing_years] = eia_stats.median()
 
     inflow = cutout.runoff(
         shapes=country_shapes,

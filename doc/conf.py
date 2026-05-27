@@ -78,8 +78,6 @@ autodoc_mock_imports = [
     "powerplantmatching",
     "rasterio",
     "dask.distributed",
-    "pydantic",
-    "ruamel",
 ]
 
 autodoc_default_flags = ["members"]
@@ -112,7 +110,7 @@ author = "PyPSA-Eur Contributors"
 # built documents.
 #
 # The short X.Y version.
-version = "v2026.02.0"
+version = "v2025.07.0"
 # The full version, including alpha/beta/rc tags.
 release = version + ""
 

@@ -43,7 +43,7 @@ import yaml
 from linopy.remote.oetc import OetcCredentials, OetcHandler, OetcSettings
 from pypsa.descriptors import get_activity_mask
 from pypsa.descriptors import get_switchable_as_dense as get_as_dense
-
+from prepare_sector_network import determine_emission_sectors
 from scripts._benchmark import memory_logger
 from scripts._helpers import (
     PYPSA_V1,
@@ -420,62 +420,6 @@ def add_retrofit_gas_boiler_constraint(
     n.model.add_constraints(lhs == rhs, name="gas_retrofit")
 
 
-def add_load_balance_components(n, config, sign=1):
-    """
-    Add load shedding or load sinks to the network with carrier 'load'.
-
-    Parameters
-    ----------
-    n : pypsa.Network
-        The PyPSA network to be modified.
-    config : dict
-        The load shedding or load sinks settings.
-    sign : float
-        Direction of the added generators. Positive for load shedding, negative for load sinks.
-
-    Returns
-    -------
-    None
-        Modifies PyPSA network in place.
-    """
-    if "load" not in n.carriers.index:
-        n.add("Carrier", "load")
-
-    carriers = config.get("carriers", {})
-    default_cost = config.get("default_cost")
-    balance_comp = "shedding" if sign > 0 else "sink"
-
-    logger.info(
-        f"Add load {balance_comp} for {'all carriers' if config.get('all_carriers') else ', '.join(carriers)}."
-    )
-
-    for bus_carrier, price in carriers.items():
-        buses_i = n.buses[n.buses.carrier == bus_carrier].index
-        n.add(
-            "Generator",
-            buses_i,
-            f" load {balance_comp}",
-            bus=buses_i,
-            carrier="load",
-            marginal_cost=price,
-            p_nom=np.inf,
-            sign=sign,
-        )
-
-    if config.get("all_carriers", False):
-        buses_rest_i = n.buses[~n.buses.carrier.isin(carriers)].index
-        n.add(
-            "Generator",
-            buses_rest_i,
-            f" load {balance_comp}",
-            bus=buses_rest_i,
-            carrier="load",
-            marginal_cost=default_cost,
-            p_nom=np.inf,
-            sign=sign,
-        )
-
-
 def prepare_network(
     n: pypsa.Network,
     solve_opts: dict,
@@ -483,7 +427,6 @@ def prepare_network(
     planning_horizons: str | None,
     co2_sequestration_potential: dict[str, float],
     limit_max_growth: dict[str, Any] | None = None,
-    rolling_horizon: bool = False,
 ) -> None:
     """
     Prepare network with various constraints and modifications.
@@ -516,13 +459,23 @@ def prepare_network(
         ):
             df.where(df.abs() > solve_opts["clip_p_max_pu"], other=0.0, inplace=True)
 
-    if (load_shedding := solve_opts.get("load_shedding", {})).get("enable", False):
+    if load_shedding := solve_opts.get("load_shedding"):
         # intersect between macroeconomic and surveybased willingness to pay
         # http://journal.frontiersin.org/article/10.3389/fenrg.2015.00055/full
-        add_load_balance_components(n, load_shedding)
+        n.add("Carrier", "load")
+        buses_i = n.buses.index
+        if isinstance(load_shedding, bool):
+            load_shedding = 3000  # Eur/MWh
 
-    if (load_sinks := solve_opts.get("load_sinks", {})).get("enable", False):
-        add_load_balance_components(n, load_sinks, sign=-1)
+        n.add(
+            "Generator",
+            buses_i,
+            " load",
+            bus=buses_i,
+            carrier="load",
+            marginal_cost=3000,  # Eur/MWh
+            p_nom=np.inf,
+        )
 
     if solve_opts.get("curtailment_mode"):
         n.add("Carrier", "curtailment", color="#fedfed", nice_name="Curtailment")
@@ -541,20 +494,18 @@ def prepare_network(
         )
 
     if solve_opts.get("noisy_costs"):
-        for t in n.components:
-            # if 'capital_cost' in t.static:
-            #    t.static['capital_cost'] += 1e1 + 2.*(np.random.random(len(t.static)) - 0.5)
-            if "marginal_cost" in t.static:
-                t.static["marginal_cost"] += 1e-2 + 2e-3 * (
-                    np.random.random(len(t.static)) - 0.5
+        for t in n.iterate_components():
+            # if 'capital_cost' in t.df:
+            #    t.df['capital_cost'] += 1e1 + 2.*(np.random.random(len(t.df)) - 0.5)
+            if "marginal_cost" in t.df:
+                t.df["marginal_cost"] += 1e-2 + 2e-3 * (
+                    np.random.random(len(t.df)) - 0.5
                 )
 
-        for t in n.components[["Line", "Link"]]:
-            if t.static.empty:
-                continue
-            t.static["capital_cost"] += (
-                1e-1 + 2e-2 * (np.random.random(len(t.static)) - 0.5)
-            ) * t.static["length"]
+        for t in n.iterate_components(["Line", "Link"]):
+            t.df["capital_cost"] += (
+                1e-1 + 2e-2 * (np.random.random(len(t.df)) - 0.5)
+            ) * t.df["length"]
 
     if solve_opts.get("nhours"):
         nhours = solve_opts["nhours"]
@@ -575,13 +526,77 @@ def prepare_network(
             n, limit_dict=limit_dict, planning_horizons=planning_horizons
         )
 
-    # rolling horizon disables cyclic storage
-    if rolling_horizon:
-        n.storage_units.state_of_charge_cyclic = False
-        n.storage_units.state_of_charge_initial = 0
-        n.stores.e_cyclic = False
-        n.stores.e_initial = 0
+def imposed_values_genertion(n, foresight, config):
+    n.generators.loc[:, "p_nom_max"] = np.inf
+    planning_horizon = int(snakemake.wildcards.planning_horizons[-4:])
+    if foresight == "myopic":
+     if planning_horizon == 2030:
+          #Imposing battery storage potential for Belgium in 2030 with recent approved plans
+          # The planned power capacity is around 1GW, assuming Energy to power ratio of 4
+          n.stores.loc["BE battery-2030", "e_nom_min"] = 4000
+          #Considering min 150 MW pf electrolysers in 2030, https://observatory.clean-hydrogen.europa.eu/hydrogen-landscape/policies-and-standards/national-strategies/belgium?utm_source=chatgpt.com
+          n.links.loc["BE H2 Electrolysis-2030", "p_nom_min"] = 150
+          n.links.loc["BE H2 Electrolysis-2030", "p_nom_max"] = 150
+     max_DAC = 600 #tons/h assuming only 5% of emissions comapred to 1990 values will be removed by DAC
+     if planning_horizon == 2040:
+         if config["run"]["name"] == "ref":
+             dac = n.links[
+              n.links.index.str.contains("BE") & 
+              n.links.index.str.contains('DAC') & 
+              ~n.links.index.str.contains('-2040')].p_nom.sum()
+             n.links.loc["BE urban central DAC-2040", "p_nom_max"] = (max_DAC - dac) * 0.5
+     if planning_horizon == 2050:
+         if config["run"]["name"] == "ref":
+             dac = n.links[
+            n.links.index.str.contains("BE") & 
+            n.links.index.str.contains('DAC') & 
+            ~n.links.index.str.contains('-2050')].p_nom.sum()
+             n.links.loc["BE urban central DAC-2050", "p_nom_max"] = max_DAC - dac
+    return n
+    
+def imposed_values_sequestration(n, config):
+  ''' This funtion impse values for carbon sequestration for Belgium for ref scenario.'''
+  if config["run"]["name"] == "ref":
+      if "BE co2 sequestered-2030" in n.stores.index:
+          n.stores.loc["BE co2 sequestered-2030", "e_nom_max"] = config["sequestration_potentia_BE"][2030] * 1e6
+      if "BE co2 sequestered-2040" in n.stores.index:
+          n.stores.loc["BE co2 sequestered-2040", "e_nom_max"] = config["sequestration_potentia_BE"][2040] * 1e6
+      if "BE co2 sequestered-2050" in n.stores.index:
+          n.stores.loc["BE co2 sequestered-2050", "e_nom_max"] = config["sequestration_potentia_BE"][2050] * 1e6 
+  return n 
 
+def imposed_TYNDP(n, foresight, config):
+   ''' This funtion impse values for TYNDP for transmissions lines'''
+   tyndp_values_mapping = {
+      ("BE", "NL"): {"s_nom": "be_nl", "s_nom_min": "be_nl"},
+      ("DE", "FR"): {"s_nom": "de_fr", "s_nom_min": "de_fr"},
+      ("DE", "NL"): {"s_nom": "de_nl", "s_nom_min": "de_nl"},
+      ("BE", "FR"): {"s_nom": "be_fr", "s_nom_min": "be_fr"},
+      }
+   
+   planning_horizon = int(snakemake.wildcards.planning_horizons[-4:])
+   mask = (n.links.index.str.startswith("TYNDP")) & (n.links["build_year"] > planning_horizon)
+   n.links.loc[mask, "p_nom_extendable"] = False   
+   if planning_horizon == 2030:
+       for index, row in n.lines.iterrows():
+        key = (row["bus0"], row["bus1"])
+        if key in tyndp_values_mapping:
+         values = tyndp_values_mapping[key]
+         n.lines.loc[index, "s_nom"] = config["TYNDP_values"][values["s_nom"]]
+         n.lines.loc[index, "s_nom_min"] = config["TYNDP_values"][values["s_nom_min"]]
+    
+   if planning_horizon == 2030:
+       n.lines["s_nom_max"] = n.lines["s_nom"]
+       condition = (n.links['carrier'] == 'DC')
+       n.links.loc[condition, "p_nom_max"] = n.links.loc[condition, "p_nom"]
+   if config["TYNDP_values"]["expansion_limit"] == True:
+     if planning_horizon != 2030:
+       n.lines["s_nom_max"] = n.lines["s_nom"] * config["TYNDP_values"]["max_expansion"]
+       condition = (n.links['carrier'] == 'DC')
+       n.links.loc[condition, "p_nom_max"] = n.links.loc[condition, "p_nom"] * config["TYNDP_values"]["max_expansion"]
+         
+   return n
+   
 
 def add_CCL_constraints(
     n: pypsa.Network, config: dict, planning_horizons: str | None
@@ -1055,7 +1070,7 @@ def add_lossy_bidirectional_link_constraints(n):
 
     carriers = n.links.loc[n.links.reversed, "carrier"].unique()  # noqa: F841
     backwards = n.links.query(
-        "carrier in @carriers and p_nom_extendable and reversed and active"
+        "carrier in @carriers and p_nom_extendable and reversed"
     ).index
     forwards = backwards.str.replace("-reversed", "")
     lhs = n.model["Link-p_nom"].loc[backwards]
@@ -1124,10 +1139,10 @@ def add_pipe_retrofit_constraint(n):
     if "reversed" not in n.links.columns:
         n.links["reversed"] = False
     gas_pipes_i = n.links.query(
-        "carrier == 'gas pipeline' and p_nom_extendable and ~reversed and active"
+        "carrier == 'gas pipeline' and p_nom_extendable and ~reversed"
     ).index
     h2_retrofitted_i = n.links.query(
-        "carrier == 'H2 pipeline retrofitted' and p_nom_extendable and ~reversed and active"
+        "carrier == 'H2 pipeline retrofitted' and p_nom_extendable and ~reversed"
     ).index
 
     if h2_retrofitted_i.empty or gas_pipes_i.empty:
@@ -1216,8 +1231,219 @@ def add_co2_atmosphere_constraint(n, snapshots):
             rhs = glc.constant
 
             n.model.add_constraints(lhs <= rhs, name=f"GlobalConstraint-{name}")
+            
+def add_selfsufficiency_constraints(n, level):
+    """
+     Add self-sufficiency constraint using a import variable.
+     Addapted from the work of Koen van Greevenbroek
+    """
+    logger.info(f"Adding self sufficiency constraint")
 
+    def group(df, b="bus"):
+        """
+        Group given dataframe by bus location or country.
+        """
+        # Ensure 'location' exists in n.buses
+        return df[b].map(n.buses.location).to_xarray()
 
+    #Calculate Total Local Production
+    local_gen_carriers = list(
+        set(
+            config["pypsa_eur"]["Generator"]
+            + ["solar rooftop"]
+        )
+    )
+    local_gen_i = n.generators.loc[
+        n.generators.carrier.isin(local_gen_carriers)
+        & (n.generators.bus.map(n.buses.location) != "EU")
+    ].index
+    local_gen_p = (
+        n.model["Generator-p"]
+        .loc[:, local_gen_i]
+        .groupby(group(n.generators.loc[local_gen_i]))
+        .sum()
+    )
+    local_gen = (local_gen_p * n.snapshot_weightings.generators).sum("snapshot")
+
+    #Hydro
+    local_hydro_i = n.storage_units.loc[n.storage_units.carrier == "hydro"].index
+    local_hydro_p = (
+        n.model["StorageUnit-p_dispatch"]
+        .loc[:, local_hydro_i]
+        .groupby(group(n.storage_units.loc[local_hydro_i]))
+        .sum()
+    )
+    local_hydro = (local_hydro_p * n.snapshot_weightings.stores).sum("snapshot")
+
+    # Conventional technologies modeled as links in pypsa
+    conv_carriers = config["electricity"].get("conventional_carriers", {})
+    local_conv_gen_i = n.links.loc[n.links.carrier.isin(conv_carriers)].index
+    local_conv_gen = None
+    if len(local_conv_gen_i) > 0:
+        local_conv_gen_p = n.model["Link-p"].loc[:, local_conv_gen_i]
+        efficiencies = n.links.loc[local_conv_gen_i, "efficiency"]
+        local_conv_gen_p = (
+            (local_conv_gen_p * efficiencies)
+            .groupby(group(n.links.loc[local_conv_gen_i], b="bus1"))
+            .sum()
+            .rename({"bus1": "bus"})
+        )
+        local_conv_gen = (local_conv_gen_p * n.snapshot_weightings.generators).sum("snapshot")
+
+    # Total locally produced energy
+    local_energy = sum(e for e in [local_gen, local_hydro, local_conv_gen] if e is not None)
+
+    #Use a new import variable
+    buses = n.buses.location.rename("bus").drop_duplicates()
+    coords = {"bus": buses, "snapshot": n.snapshots}
+    dims = ("bus", "snapshot")
+    n.model.add_variables(
+      coords=coords,
+      dims=dims,
+      name="Import_p",
+      lower=0,
+    )
+    
+    #Define transmission lines and DC links
+    cross_region_lines = n.lines.loc[(group(n.lines, b="bus0") != group(n.lines, b="bus1")).to_numpy()]
+    cross_region_links = n.links.loc[(group(n.links, b="bus0") != group(n.links, b="bus1")).to_numpy()]
+    #Removing reversed transmission lines as efficiency is already considered
+    cross_region_links = cross_region_links.loc[ cross_region_links.carrier.isin(["DC"])
+    & ~cross_region_links.index.str.contains("reversed") ]
+
+    cross_region_components = {
+        'Line': cross_region_lines,
+        'Link': cross_region_links,
+    }
+
+    for component_name, df in cross_region_components.items():
+        if df.empty:
+            continue
+
+        if component_name == "Line":
+          avail = df["s_max_pu"]
+          flow = n.model["Line-s"].loc[:, df.index] / avail
+          inflow  = flow.groupby(group(df, "bus1")).sum()
+          outflow = flow.groupby(group(df, "bus0")).sum()
+        else:
+          eff = df["efficiency"]
+          flow = n.model["Link-p"].loc[:, df.index] / eff
+          inflow  = flow.groupby(group(df, "bus1")).sum()
+          outflow = flow.groupby(group(df, "bus0")).sum()
+        
+        #Total cross border flows
+        net = inflow - outflow
+        #Impose a positive netflow constraint to consider as imports
+        n.model.add_constraints(
+          n.model["Import_p"] >= net,
+          name=f"import_positive_{component_name}"
+        )
+        
+    #Total imported electricity
+    imported_elec = (
+      n.model["Import_p"] * n.snapshot_weightings.generators).sum("snapshot")
+    #Self-sufficiency constraint, level is set in configfile
+    n.model.add_constraints(
+      imported_elec <= (1 - level) * local_energy,
+      name="import_energy_limit")
+
+def add_co2limit_country(n, limit_countries, nyears=1.0):
+    """
+    Add a set of emissions limit constraints for specified countries.
+    The countries and emissions limits are specified in the config file entry 'co2_budget_country_{investment_year}'.
+    Parameters
+    ----------
+    n : pypsa.Network
+    config : dict
+    limit_countries : dict
+    nyears: float, optional
+        Used to scale the emissions constraint to the number of snapshots of the base network.
+    """
+    logger.info(f"Adding CO2 budget limit for each country as per unit of 1990 levels")
+
+    countries = n.config["countries"]
+
+    # TODO: import function from prepare_sector_network? Move to common place?
+    sectors = determine_emission_sectors(options)
+
+    co2_totals = 1e6 * pd.read_csv(snakemake.input.co2_totals_name, index_col=0)
+    #Consider non-energy emissions from agriculture in the carbon budget on country level
+    ghg_emissions_agri= 1e6 * pd.read_csv(snakemake.input.ghg_emissions_agri, index_col=0)
+    non_energy_ghg_agri_ch4 = ghg_emissions_agri.loc[countries, 'Total CH4 emissions from agriculture']
+    non_energy_ghg_agri_n2o = ghg_emissions_agri.loc[countries, 'Total N2O emissions from agriculture']
+    ghg_emissions_agri_total = non_energy_ghg_agri_ch4 + non_energy_ghg_agri_n2o
+    co2_limit_countries = co2_totals.loc[countries, sectors].sum(axis=1)
+    co2_limit_countries = co2_limit_countries.loc[
+        co2_limit_countries.index.isin(limit_countries.keys())
+    ]
+    lulucf = co2_totals.loc[countries, 'LULUCF']
+    lulucf[lulucf > 0] = 0
+    lulucf = lulucf * -1
+    co2_limit_countries *= co2_limit_countries.index.map(limit_countries) * nyears
+    co2_limit_countries = (co2_limit_countries + lulucf) - ghg_emissions_agri_total
+
+    p = n.model["Link-p"]  # dimension: (time, component)
+
+    # NB: Most country-specific links retain their locational information in bus1 (except for DAC, where it is in bus2, and process emissions, where it is in bus0)
+    country = n.links.bus1.map(n.buses.location).map(n.buses.country)
+    
+    country_DAC = (
+        n.links[n.links.carrier == "DAC"]
+        .bus3.map(n.buses.location)
+        .map(n.buses.country)
+    )
+    country[country_DAC.index] = country_DAC
+    patterns = ["process emissions", "HVC to air", "electrobiofuels","unsustainable bioliquids","biomass-to-methanol","biomass to liquid"]
+
+    for pattern in patterns:
+      source = n.links[n.links.carrier.str.contains(pattern)].bus0.map(n.buses.location).map(n.buses.country)
+      country[source.index] = source
+    mask = country.isna() | (country == '')
+    country[mask] = country[mask].index.str[:2]
+    country = country[country != 'EU']
+    lhs = []
+    for port in [col[3:] for col in n.links if col.startswith("bus")]:
+        if port == str(0):
+            efficiency = (
+                n.links["efficiency"].apply(lambda x: 1.0).rename("efficiency0")
+            )
+        elif port == str(1):
+            efficiency = n.links["efficiency"]
+        else:
+            efficiency = n.links[f"efficiency{port}"]
+        mask = n.links[f"bus{port}"].map(n.buses.carrier).eq("co2")
+
+        idx = n.links[mask].index
+        exclude = ["EU oil refining", "EU methanol import", "EU oil import"]
+        idx = idx[~np.isin(idx, exclude)]
+        #idx = idx[idx.isin(country.index)]
+        # idx = idx[idx != "EU oil refining","EU methanol import","EU oil import"]
+        grouping = country.loc[idx]
+
+        if not grouping.isnull().all():
+            expr = (
+                (p.loc[:, idx] * efficiency[idx])
+                .groupby(grouping, axis=1)
+                .sum()
+                * n.snapshot_weightings.generators
+            ).sum(dims="snapshot")
+            lhs.append(expr)
+
+    lhs = sum(lhs)  # dimension: (country)
+    lhs = lhs.rename({list(lhs.dims)[0]: "snapshot"})
+    rhs = pd.Series(co2_limit_countries)  # dimension: (country)
+    for ct in lhs.indexes["snapshot"]:
+        n.model.add_constraints(
+            lhs.loc[ct] <= rhs[ct],
+            name=f"GlobalConstraint-co2_limit_per_country{ct}",
+        )
+        n.add(
+            "GlobalConstraint",
+            f"co2_limit_per_country{ct}",
+            constant=rhs[ct],
+            sense="<=",
+            type="",
+        )
 def extra_functionality(
     n: pypsa.Network, snapshots: pd.DatetimeIndex, planning_horizons: str | None = None
 ) -> None:
@@ -1287,6 +1513,17 @@ def extra_functionality(
 
     if config["sector"]["imports"]["enable"]:
         add_import_limit_constraint(n, snapshots)
+    if config["self_sufficiency"]["self_sufficiency_constraint"]:
+            level = config["self_sufficiency"]["level"]
+            add_selfsufficiency_constraints(n, level)
+    if n.config["sector"]["co2_budget_national"]:
+        # prepare co2 constraint
+        nhours = n.snapshot_weightings.generators.sum()
+        nyears = nhours / 8760
+        investment_year = int(snakemake.wildcards.planning_horizons[-4:])
+        limit_countries = snakemake.config["co2_budget_national"][investment_year]
+        # add co2 constraint for each country
+        add_co2limit_country(n, limit_countries, nyears)
 
     if n.params.custom_extra_functionality:
         source_path = n.params.custom_extra_functionality
@@ -1413,7 +1650,6 @@ def collect_kwargs(
 
         if cf_solving["post_discretization"].get("enable", False):
             logger.info("Add post-discretization parameters.")
-            cf_solving["post_discretization"].pop("enable", None)
             all_kwargs.update(cf_solving["post_discretization"])
 
         return all_kwargs, {}
@@ -1480,7 +1716,9 @@ if __name__ == "__main__":
     configure_logging(snakemake)
     set_scenario_config(snakemake)
     update_config_from_wildcards(snakemake.config, snakemake.wildcards)
-
+    options = snakemake.params.sector
+    countries = snakemake.params.countries
+    config = snakemake.config
     solve_opts = snakemake.params.solving["options"]
     cf_solving = snakemake.params.solving["options"]
 
@@ -1498,9 +1736,19 @@ if __name__ == "__main__":
         planning_horizons=planning_horizons,
         co2_sequestration_potential=snakemake.params["co2_sequestration_potential"],
         limit_max_growth=snakemake.params.get("sector", {}).get("limit_max_growth"),
-        rolling_horizon=cf_solving["rolling_horizon"],
     )
-
+    n = imposed_values_genertion(
+            n,
+            config=snakemake.config,
+            foresight=snakemake.params.foresight,)
+    n = imposed_values_sequestration(
+            n,
+            config=snakemake.config,)
+    n = imposed_TYNDP(
+        n,
+        config=snakemake.config,
+        foresight=snakemake.params.foresight,)
+    
     # Determine solve mode
     rolling_horizon = cf_solving.get("rolling_horizon", False)
     skip_iterations = cf_solving.get("skip_iterations", False)
@@ -1517,7 +1765,7 @@ if __name__ == "__main__":
     with memory_logger(
         filename=getattr(snakemake.log, "memory", None), interval=logging_frequency
     ) as mem:
-        if rolling_horizon:
+        if rolling_horizon and snakemake.rule == "solve_operations_network":
             logger.info("Using rolling horizon optimization...")
             all_kwargs, _ = collect_kwargs(
                 snakemake.config,
@@ -1597,9 +1845,6 @@ if __name__ == "__main__":
 
     n.meta = dict(snakemake.config, **dict(wildcards=dict(snakemake.wildcards)))
     n.export_to_netcdf(snakemake.output.network)
-
-    if snakemake.output.get("model"):
-        n.model.to_netcdf(snakemake.output.model)
 
     with open(snakemake.output.config, "w") as file:
         yaml.dump(

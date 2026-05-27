@@ -28,12 +28,16 @@ if __name__ == "__main__":
     set_scenario_config(snakemake)
 
     config = snakemake.config["energy"]
+    configg = snakemake.config
 
     if snakemake.wildcards.kind == "heat":
+     if configg["run"]["name"] == "ref":
         snapshots = get_snapshots(
             snakemake.params.snapshots, snakemake.params.drop_leap_day
         )
         data_years = snapshots.year.unique()
+     else:
+        data_years = int(config["energy_totals_year"])
     else:
         data_years = int(config["energy_totals_year"])
 

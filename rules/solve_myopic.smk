@@ -26,7 +26,7 @@ rule add_existing_baseyear:
         existing_heating_distribution=resources(
             "existing_heating_distribution_base_s_{clusters}_{planning_horizons}.csv"
         ),
-        heating_efficiencies=resources("heating_efficiencies.csv"),
+        heating_efficiencies=resources("heating_efficiencies_s_{clusters}_{planning_horizons}.csv"),
     output:
         resources(
             "networks/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}_brownfield.nc"
@@ -48,7 +48,7 @@ rule add_existing_baseyear:
             "add_existing_baseyear/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}"
         )
     script:
-        scripts("add_existing_baseyear.py")
+        "../scripts/add_existing_baseyear.py"
 
 
 def input_profile_tech_brownfield(w):
@@ -86,7 +86,7 @@ rule add_brownfield:
         resources(
             "networks/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}_brownfield.nc"
         ),
-    threads: 4
+    threads: 1
     resources:
         mem_mb=10000,
     log:
@@ -98,7 +98,7 @@ rule add_brownfield:
             "add_brownfield/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}"
         )
     script:
-        scripts("add_brownfield.py")
+        "../scripts/add_brownfield.py"
 
 
 ruleorder: add_existing_baseyear > add_brownfield
@@ -114,21 +114,19 @@ rule solve_sector_network_myopic:
             "sector", "co2_sequestration_potential", default=200
         ),
         custom_extra_functionality=input_custom_extra_functionality,
+        sector=config_provider("sector"),
+        countries=config_provider("countries"),
     input:
         network=resources(
             "networks/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}_brownfield.nc"
         ),
+        co2_totals_name=resources("co2_totals_s_{clusters}_{planning_horizons}.csv"),
+        ghg_emissions_agri = "data/clever_AFOLUB_{planning_horizons}.csv",
     output:
         network=RESULTS
         + "networks/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.nc",
         config=RESULTS
         + "configs/config.base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.yaml",
-        model=(
-            RESULTS
-            + "models/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}.nc"
-            if config["solving"]["options"]["store_model"]
-            else []
-        ),
     shadow:
         shadow_config
     log:
@@ -141,11 +139,10 @@ rule solve_sector_network_myopic:
     threads: solver_threads
     resources:
         mem_mb=config_provider("solving", "mem_mb"),
-        runtime=config_provider("solving", "runtime", default="6h"),
     benchmark:
         (
             RESULTS
             + "benchmarks/solve_sector_network/base_s_{clusters}_{opts}_{sector_opts}_{planning_horizons}"
         )
     script:
-        scripts("solve_network.py")
+        "../scripts/solve_network.py"

@@ -39,9 +39,6 @@ if __name__ == "__main__":
     configure_logging(snakemake)
     set_scenario_config(snakemake)
 
-    pts_tmp_fn = None
-    plg_tmp_fn = None
-
     nprocesses = int(snakemake.threads)
     noprogress = not snakemake.config["atlite"].get("show_progress", True)
     config = snakemake.params["renewable"][snakemake.wildcards.technology]
@@ -163,7 +160,7 @@ if __name__ == "__main__":
         availability = cutout.availabilitymatrix(regions, excluder, **kwargs)
 
     for fn in [pts_tmp_fn, plg_tmp_fn]:
-        if fn and os.path.exists(fn):
+        if os.path.exists(fn):
             os.remove(fn)
 
     availability = availability.sel(bus=buses)

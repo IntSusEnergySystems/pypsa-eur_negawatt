@@ -59,34 +59,42 @@ def build_transport_demand(traffic_fn, airtemp_fn, nodes, nodal_transport_data):
     )
     transport_shape = transport_shape / transport_shape.sum()
 
-    # get heating demand for correction to demand time series
-    temperature = xr.open_dataarray(airtemp_fn).to_pandas()
+    if config["run"]["name"] == "ref":
+     # get heating demand for correction to demand time series
+     temperature = xr.open_dataarray(airtemp_fn).to_pandas()
 
-    # correction factors for vehicle heating
-    dd_ICE = transport_degree_factor(
+     # correction factors for vehicle heating
+     dd_ICE = transport_degree_factor(
         temperature,
         options["transport_heating_deadband_lower"],
         options["transport_heating_deadband_upper"],
         options["ICE_lower_degree_factor"],
         options["ICE_upper_degree_factor"],
-    )
+     )
 
-    # divide out the heating/cooling demand from ICE totals
-    ice_correction = (transport_shape * (1 + dd_ICE)).sum() / transport_shape.sum()
+     # divide out the heating/cooling demand from ICE totals
+     ice_correction = (transport_shape * (1 + dd_ICE)).sum() / transport_shape.sum()
 
-    # unit TWh
-    energy_totals_transport = (
+     # unit TWh
+     energy_totals_transport = (
         pop_weighted_energy_totals["total road"]
         + pop_weighted_energy_totals["total rail"]
         - pop_weighted_energy_totals["electricity rail"]
-    )
+     )
 
-    # average fuel efficiency in MWh/100 km
-    eff = nodal_transport_data["average fuel efficiency"]
-
-    return (transport_shape.multiply(energy_totals_transport) * 1e6 * nyears).divide(
-        eff * ice_correction
-    )
+     # average fuel efficiency in MWh/100 km
+     eff = nodal_transport_data["average fuel efficiency"]
+     transport = (transport_shape.multiply(energy_totals_transport) * 1e6 * nyears).divide(
+         eff * ice_correction
+     )
+    else:
+        energy_totals_transport = (
+            pop_weighted_energy_totals["total road"]
+        )
+        transport = (
+            (transport_shape.multiply(energy_totals_transport) * 1e6 * nyears)
+        )
+    return transport 
 
 
 def transport_degree_factor(
@@ -170,7 +178,7 @@ if __name__ == "__main__":
         snakemake = mock_snakemake("build_transport_demand", clusters=128)
     configure_logging(snakemake)
     set_scenario_config(snakemake)
-
+    config=snakemake.config
     pop_layout = pd.read_csv(snakemake.input.clustered_pop_layout, index_col=0)
 
     nodes = pop_layout.index
@@ -190,7 +198,7 @@ if __name__ == "__main__":
 
     energy_totals_year = snakemake.params.energy_totals_year
     nodal_transport_data = build_nodal_transport_data(
-        snakemake.input.transport_data, pop_layout, energy_totals_year
+        snakemake.input.transport_datas, pop_layout, energy_totals_year
     )
 
     transport_demand = build_transport_demand(

@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema.default.json
+# yaml-language-server: $schema=../schema.json
 # SPDX-FileCopyrightText: Contributors to PyPSA-Eur <https://github.com/pypsa/pypsa-eur>
 #
 # SPDX-License-Identifier: CC0-1.0
@@ -37,7 +37,7 @@ electricity:
   renewable_carriers: [solar, solar-hsat, onwind, offwind-ac, offwind-dc, offwind-float]
   estimate_renewable_capacities:
     enable: true
-    from_powerplantmatching: true
+    from_gem: true
     year: 2020
     expansion_limit: false
     technology_mapping:
@@ -77,7 +77,7 @@ lines:
 solving:
   solver:
     name: highs
-    options: highs-default
+    options: highs-simplex
 
   check_objective:
     enable: false

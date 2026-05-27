@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=../schema.default.json
+# yaml-language-server: $schema=../schema.json
 # SPDX-FileCopyrightText: Contributors to PyPSA-Eur <https://github.com/pypsa/pypsa-eur>
 #
 # SPDX-License-Identifier: CC0-1.0
@@ -68,7 +68,7 @@ sector:
 
 electricity:
   extendable_carriers:
-    Generator: [solar, onwind, OCGT, CCGT, nuclear]
+    Generator: [OCGT]
     StorageUnit: [battery]
     Store: [H2]
     Link: [H2 pipeline]
@@ -109,7 +109,7 @@ industry:
 solving:
   solver:
     name: highs
-    options: highs-default
+    options: highs-simplex
   mem: 4000
 
 plotting:

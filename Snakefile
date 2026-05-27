@@ -18,7 +18,6 @@ from scripts._helpers import (
     get_scenarios,
     get_shadow,
     path_provider,
-    script_path_provider,
 )
 from scripts.lib.validation.config import validate_config
 
@@ -44,7 +43,6 @@ exclude_from_shared = run["shared_resources"]["exclude"]
 logs = path_provider("logs/", RDIR, shared_resources, exclude_from_shared)
 benchmarks = path_provider("benchmarks/", RDIR, shared_resources, exclude_from_shared)
 resources = path_provider("resources/", RDIR, shared_resources, exclude_from_shared)
-scripts = script_path_provider(Path(workflow.snakefile).parent)
 
 RESULTS = "results/" + RDIR
 
@@ -93,7 +91,7 @@ if config["foresight"] == "perfect":
 
 rule all:
     input:
-        expand(RESULTS + "graphs/costs.pdf", run=config["run"]["name"]),
+        expand(RESULTS + "graphs/costs.svg", run=config["run"]["name"]),
         expand(resources("maps/power-network.pdf"), run=config["run"]["name"]),
         expand(
             resources("maps/power-network-s-{clusters}.pdf"),
@@ -290,6 +288,7 @@ rule rulegraph:
 
         # Generate visualizations from the DOT file
         if [ -s {output.dot} ]; then
+            dot -c
 
             echo "[Rule rulegraph] Generating PDF from DOT"
             dot -Tpdf -o {output.pdf} {output.dot} || {{ echo "Error: Failed to generate PDF. Is graphviz installed?" >&2; exit 1; }}
