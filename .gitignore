@@ -24,6 +24,8 @@ gurobi.log
 /benchmarks
 /logs
 /notebooks
+/data/*
+*.done
 /cutouts
 /tmp
 doc/_build
@@ -59,10 +61,6 @@ d1gam3xoknrgr2.cloudfront.net/
 *.org
 
 *.nc
-*.zip
-*.xlsb
-*.pdf
-*.kml
 
 *~
 
@@ -80,7 +78,6 @@ d1gam3xoknrgr2.cloudfront.net/
 
 merger-todos.md
 
-*.html
 
 # private dev folder
 dev/*

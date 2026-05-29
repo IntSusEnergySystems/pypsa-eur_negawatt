@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html class="no-js" lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Data Viewer</title>
+    <link rel="stylesheet" href="https://clever-energy-scenario.eu/wp-content/themes/twentytwenty/style.css">
+    <link rel="stylesheet" href="https://clever-energy-scenario.eu/wp-content/themes/clever/style.css">
+    <script src="https://cdn.plot.ly/plotly-2.16.1.min.js"></script>
+    <style>
+        /* SEPIA style changes */
+        #navsticky .menu-item { display: inline-block !important }
+        #menu-item-59 img { display: inline-block }
+        .site-main { padding:0 5%; }
+        #navsticky li { top: -15px; }
+        #navsticky #menu-dropdown { top: -21px; }
+        #navsticky .menu-item-70 A { background:none; }
+        #navsticky .menu-item-70 { margin-left:0; }
+		#navsticky {
+          background-color: #d2e9e0; /* light teal */
+        }
+		#navsticky #menu-item-70 > a {
+		    color: black;
+			text-decoration: none;
+			white-space: nowrap;
+			display: inline-flex;
+			align-items: center;
+			padding-left: 0; 
+			margin-left: -5px;
+		}
+        #navsticky #return-arrow{
+            font-size: 30px;
+            padding-right: 3px;
+			color: black;
+        }
+        .toc { 
+            list-style: none; 
+            padding: 0; 
+			margin: 0;
+			display: inline-block;
+        }
+        .toc li { 
+            padding: 4px 8px;
+            cursor: pointer; 
+            margin: 1px 0;
+            text-decoration: underline; /* Ensure no underline by default */
+			font-size: 25px;
+        }
+		ol, ul {
+            margin: 0;
+            padding: 0;
+        }
+        .toc li:hover { 
+            text-decoration: underline; /* Add underline on hover */
+            background: none; /* Remove background on hover */
+        }
+        .encart {
+            margin-bottom: 50px; /* Remove any bottom margin */
+        }
+        #scenario-switch {
+            margin-top: 10px; /* Reduce the top margin */
+			margin-bottom: 20px; 
+            font-weight: bold;
+            text-align: left;
+            display: none;
+			font-size: 30px;
+			color: black;
+        }
+        #scenario-switch a {
+            text-decoration: underline;
+            color: blue;
+            font-size: 30px;
+        }
+        #scenario-switch a:hover {
+            text-decoration: underline;
+        }
+		.encart {
+           background: none !important;
+        }
+		.secondary-toc {
+           margin-left: 30px; /* Moves it slightly to the right */
+        }
+		.secondary-toc li {
+           font-size: 18px !important; /* Ensures same font size as primary TOC */
+           padding: 1px 8px;
+           cursor: pointer;
+           text-decoration: underline;
+		   list-style: none !important;
+		   margin: 0;
+        }
+		.secondary-toc li:hover {
+          text-decoration: underline;
+          background: none;
+        }
+		.main-title {
+          color: #008080; /* teal blue */
+        }
+    </style>
+    <script>
+    var selectedCountry = localStorage.getItem("selectedCountry") || "BE"; // Retrieve from localStorage or default to "BE"
+    var currentScenario = "";
+
+    function detectScenario() {
+        const url = window.location.href;
+        if (url.includes("_suff")) {
+            currentScenario = "suff";
+        } else if (url.includes("_ref")) {
+            currentScenario = "ref";
+        } else {
+            currentScenario = "";
+        }
+    }
+
+    function updateCountry() {
+        selectedCountry = document.getElementById("country-select").value;
+        localStorage.setItem("selectedCountry", selectedCountry); // Save to localStorage
+        
+        // Load default page based on selection
+        let defaultPage;
+        if (selectedCountry === "BE") {
+            defaultPage = "BE_combined_scenario_chart.html";
+        } else if (selectedCountry === "EU") {
+            defaultPage = "EU_combined_scenario_chart.html";
+		} else if (selectedCountry === "DE") {
+            defaultPage = "DE_combined_scenario_chart.html";
+		} else if (selectedCountry === "FR") {
+            defaultPage = "FR_combined_scenario_chart.html";
+		} else if (selectedCountry === "GB") {
+            defaultPage = "GB_combined_scenario_chart.html";
+		} else if (selectedCountry === "NL") {
+            defaultPage = "NL_combined_scenario_chart.html";
+        }
+        
+        // Only redirect if we're not already on the default page
+        const currentPage = window.location.pathname.split("/").pop();
+        if (currentPage !== defaultPage) {
+            window.location.href = defaultPage;
+        } else {
+            updateTableOfContents(); // Refresh TOC if already on the right page
+        }
+    }
+
+    function updateTableOfContents() {
+        detectScenario();
+        const fileOptions = {
+            "BE": [
+                "combined_scenario_chart",
+                "demands_suff", "demands_ref",
+                "emissions_suff", "emissions_ref",
+                "costs_suff", "costs_ref",
+                "capacities_suff", "capacities_ref",
+                "fec_suff", "fec_ref",
+                "sankeys_suff", "sankeys_ref",
+                "maps_suff", "maps_ref",
+                "dispatch_plots_suff", "dispatch_plots_ref"
+            ],
+            "EU": [
+                "combined_scenario_chart",
+                "demands_suff", "demands_ref",
+                "emissions_suff", "emissions_ref",
+                "costs_suff", "costs_ref",
+                "capacities_suff", "capacities_ref",
+                "fec_suff", "fec_ref",
+                "sankeys_suff", "sankeys_ref",
+                "maps_suff", "maps_ref",
+                "dispatch_plots_suff", "dispatch_plots_ref"
+            ],
+			"DE": [
+                "combined_scenario_chart",
+                "demands_suff", "demands_ref",
+                "emissions_suff", "emissions_ref",
+                "costs_suff", "costs_ref",
+                "capacities_suff", "capacities_ref",
+                "fec_suff", "fec_ref",
+                "sankeys_suff", "sankeys_ref",
+                "maps_suff", "maps_ref",
+                "dispatch_plots_suff", "dispatch_plots_ref"
+            ],
+			"FR": [
+                "combined_scenario_chart",
+                "demands_suff", "demands_ref",
+                "emissions_suff", "emissions_ref",
+                "costs_suff", "costs_ref",
+                "capacities_suff", "capacities_ref",
+                "fec_suff", "fec_ref",
+                "sankeys_suff", "sankeys_ref",
+                "maps_suff", "maps_ref",
+                "dispatch_plots_suff", "dispatch_plots_ref"
+            ],
+			"GB": [
+                "combined_scenario_chart",
+                "demands_suff", "demands_ref",
+                "emissions_suff", "emissions_ref",
+                "costs_suff", "costs_ref",
+                "capacities_suff", "capacities_ref",
+                "fec_suff", "fec_ref",
+                "sankeys_suff", "sankeys_ref",
+                "maps_suff", "maps_ref",
+                "dispatch_plots_suff", "dispatch_plots_ref"
+            ],
+			"NL": [
+                "combined_scenario_chart",
+                "demands_suff", "demands_ref",
+                "emissions_suff", "emissions_ref",
+                "costs_suff", "costs_ref",
+                "capacities_suff", "capacities_ref",
+                "fec_suff", "fec_ref",
+                "sankeys_suff", "sankeys_ref",
+                "maps_suff", "maps_ref",
+                "dispatch_plots_suff", "dispatch_plots_ref"
+            ]
+        };
+
+        let tocList = document.getElementById("toc-list");
+        tocList.innerHTML = "";
+        let groupedFiles = {};
+
+        fileOptions[selectedCountry].forEach(file => {
+            let baseName = file.replace("_suff", "").replace("_ref", "");
+            if (!groupedFiles[baseName]) {
+                groupedFiles[baseName] = [];
+            }
+            groupedFiles[baseName].push(file);
+        });
+        
+        let currentFile = window.location.pathname.split("/").pop().replace(".html", "");
+        
+        Object.keys(groupedFiles).forEach(baseName => {
+            let listItem = document.createElement("li");
+            
+            if (groupedFiles[baseName].length > 1) {
+                // For files with both scenarios
+                listItem.textContent = formatTitle(baseName);
+                // Use currentScenario if available, otherwise default to "suff"
+                let scenarioToLoad = currentScenario || "suff";
+                listItem.onclick = () => loadFile(baseName, scenarioToLoad);
+            } else {
+                // For files without scenarios
+                let fileName = groupedFiles[baseName][0];
+                listItem.textContent = formatTitle(fileName);
+                listItem.onclick = () => loadFile(fileName, "");
+            }
+            
+            tocList.appendChild(listItem);
+            
+            if (currentFile.includes(baseName)) {
+                let secondaryContainer = document.createElement("div");
+                secondaryContainer.classList.add("secondary-toc");
+                let secondaryTOC = document.createElement("div");
+                secondaryTOC.classList.add("secondary-toc");
+                secondaryTOC.innerHTML = "{{TABLE_OF_CONTENTS}}"; 
+                tocList.appendChild(secondaryTOC);
+                tocList.appendChild(secondaryContainer);
+            }
+        });
+
+        updateSwitchLink();
+    }
+
+    function formatTitle(fileName) {
+        let titleMap = {
+            "combined_scenario_chart": "Scenarios Overview",
+            "demands": "Demands",
+            "emissions": "Emissions",
+            "costs": "Costs",
+            "capacities": "Capacities",
+            "fec": "Energy Consumption",
+            "sankeys": "Sankeys",
+            "maps": "Maps",
+            "dispatch_plots": "Dispatch"
+        };
+        fileName = fileName.replace("_suff", "").replace("_ref", "");
+        return titleMap[fileName] || fileName;
+    }
+
+    function updateSwitchLink() {
+        let switchLink = document.getElementById("scenario-switch");
+        if (currentScenario === "suff" || currentScenario === "ref") {
+            let newScenario = currentScenario === "suff" ? "ref" : "suff";
+            let currentFileName = window.location.pathname.split("/").pop();
+            let baseName = currentFileName.replace(`_${currentScenario}.html`, "");
+            
+            // Create more descriptive switch text based on the content
+            let currentText, newText;
+            if (baseName.includes("emissions")) {
+                currentText = currentScenario === "suff" 
+                    ? "CO2 equivalent emissions in sufficiency scenario" 
+                    : "CO2 equivalent emissions in reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            else if (baseName.includes("demands")) {
+                currentText = currentScenario === "suff" 
+                    ? "Sectoral demands in sufficiency scenario" 
+                    : "Sectoral demands in reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            else if (baseName.includes("costs")) {
+                currentText = currentScenario === "suff" 
+                    ? "Operational and investment costs in sufficiency scenario" 
+                    : "Operational and investment costs in reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            else if (baseName.includes("capacities")) {
+                currentText = currentScenario === "suff" 
+                    ? "Optimized technology capacities in sufficiency scenario" 
+                    : "Optimized technology capacities in reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            else if (baseName.includes("fec")) {
+                currentText = currentScenario === "suff" 
+                    ? "Final energy consumption in sufficiency scenario" 
+                    : "Final energy consumption in reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            else if (baseName.includes("sankeys")) {
+                currentText = currentScenario === "suff" 
+                    ? "Sankey diagrams for sufficiency scenario" 
+                    : "Sankey diagrams for reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            else if (baseName.includes("maps")) {
+                currentText = currentScenario === "suff" 
+                    ? "Geographical grid maps in sufficiency scenario" 
+                    : "Geographical grid maps in reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            else if (baseName.includes("dispatch_plots")) {
+                currentText = currentScenario === "suff" 
+                    ? "Seasonal electricity and heat dispatch in sufficiency scenario" 
+                    : "Seasonal electricity and heat dispatch in reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            } else {
+                // Default text for other pages
+                currentText = currentScenario === "suff" 
+                    ? "Sufficiency scenario" 
+                    : "Reference scenario";
+                newText = currentScenario === "suff" 
+                    ? "Switch to reference scenario" 
+                    : "Switch to sufficiency scenario";
+            }
+            
+            // Use the full filename including country prefix for the link
+            let newFileName = baseName + `_${newScenario}.html`;
+            switchLink.innerHTML = `${currentText} (<a href="${newFileName}">${newText}</a>)`;
+            switchLink.style.display = "block";
+        } else {
+            switchLink.style.display = "none";
+        }
+    }
+
+    function loadFile(baseName, scenario) {
+        let fileName = scenario ? `${selectedCountry}_${baseName}_${scenario}.html` : `${selectedCountry}_${baseName}.html`;
+        window.location.href = fileName;
+    }
+
+    window.onload = function () {
+        // Set the dropdown to the stored country
+        document.getElementById("country-select").value = selectedCountry;
+        updateTableOfContents(); // Initialize TOC on page load
+    };
+    </script>
+</head>
+<body>
+    <div id="top"></div>
+    <div id="navsticky">
+        <a href="https://www.negawatt.be/">
+            <img src="https://www.negawatt.be/scenario/logo.png" class="logo_stiky" style="width: 200px; height: auto;">
+        </a>
+        <li id="menu-item-70" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-70">
+            <a href="https://www.negawatt.be/" target="_blank">
+                <span id="return-arrow">&#5130;</span> Back to project website
+            </a>
+        </li>
+        <li id="menu-dropdown">
+            <select id="country-select" onchange="updateCountry()">
+				<option value="BE">Belgium</option>
+				<option value="DE">Germany</option>
+				<option value="FR">France</option>
+				<option value="GB">Great Britain</option>
+				<option value="NL">Netherlands</option>
+                <option value="EU">5 countries</option>
+            </select>
+        </li>
+    </div>
+    <main id="main" class="site-main main_large" role="main">
+        <div class="encart">
+            <h2>Table of contents</h2>
+            <ul id="toc-list" class="toc"></ul>
+        </div>
+        <div id="scenario-switch"></div>
+        <div id="content">{{MAIN}}</div>
+    </main>
+</body>
+</html>
