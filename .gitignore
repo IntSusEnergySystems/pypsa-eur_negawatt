@@ -63,7 +63,7 @@ d1gam3xoknrgr2.cloudfront.net/
 *.nc
 
 *~
-
+*.done
 *.egg-info
 
 *.pyc
@@ -78,6 +78,7 @@ d1gam3xoknrgr2.cloudfront.net/
 
 merger-todos.md
 
+*.html
 
 # private dev folder
 dev/*
