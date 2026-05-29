@@ -24,7 +24,6 @@ gurobi.log
 /benchmarks
 /logs
 /notebooks
-/data/*
 /cutouts
 /tmp
 doc/_build
@@ -60,6 +59,10 @@ d1gam3xoknrgr2.cloudfront.net/
 *.org
 
 *.nc
+*.zip
+*.xlsb
+*.pdf
+*.kml
 
 *~
 
