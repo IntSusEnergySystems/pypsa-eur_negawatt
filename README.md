@@ -1,115 +1,307 @@
-<!--
-SPDX-FileCopyrightText: Contributors to PyPSA-Eur <https://github.com/pypsa/pypsa-eur>
-SPDX-License-Identifier: CC-BY-4.0
--->
+# PyPSA-Eur Negawatt Belgium
 
-![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/pypsa/pypsa-eur?include_prereleases)
-[![Test workflows](https://github.com/pypsa/pypsa-eur/actions/workflows/test.yaml/badge.svg)](https://github.com/pypsa/pypsa-eur/actions/workflows/test.yaml)
-[![Documentation](https://readthedocs.org/projects/pypsa-eur/badge/?version=latest)](https://pypsa-eur.readthedocs.io/en/latest/?badge=latest)
-![Size](https://img.shields.io/github/repo-size/pypsa/pypsa-eur)
-[![Zenodo PyPSA-Eur](https://zenodo.org/badge/DOI/10.5281/zenodo.3520874.svg)](https://doi.org/10.5281/zenodo.3520874)
-[![Zenodo PyPSA-Eur-Sec](https://zenodo.org/badge/DOI/10.5281/zenodo.3938042.svg)](https://doi.org/10.5281/zenodo.3938042)
-[![Snakemake](https://img.shields.io/badge/snakemake-≥9-brightgreen.svg?style=flat)](https://snakemake.readthedocs.io)
-[![Discord](https://img.shields.io/discord/911692131440148490?logo=discord)](https://discord.gg/AnuJBk23FU)
-[![REUSE status](https://api.reuse.software/badge/github.com/pypsa/pypsa-eur)](https://api.reuse.software/info/github.com/pypsa/pypsa-eur)
+A sector-coupled energy system optimisation model for Belgium and its neighbours,
+built on top of [PyPSA-Eur](https://github.com/PyPSA/pypsa-eur).
 
-# PyPSA-Eur: A Sector-Coupled Open Optimisation Model of the European Energy System
+This repository implements the **Negawatt Belgium** scenarios, studying two contrasting
+energy transition pathways to 2050 for Belgium, Germany, France, Great Britain, and
+the Netherlands.
 
-PyPSA-Eur is an open model dataset of the European energy system at the
-transmission network level that covers the full ENTSO-E area. The model is suitable both for operational studies and generation and transmission expansion planning studies.
-The continental scope and highly resolved spatial scale enables a proper description of the long-range
-smoothing effects for renewable power generation and their varying resource availability.
+## Authors
 
+**Sylvain Quoilin** and **Umair Tareen**  
+[University of Liège](https://www.uliege.be) — Energy Systems Research Unit (ESRU)
 
+## Acknowledgements
 
+This work is based on [PyPSA-Eur v2025.07.0](https://github.com/PyPSA/pypsa-eur), an
+open-source sector-coupled energy model of the European energy system. Please cite
+the original model if you use this repository:
 
-The model is described in the [documentation](https://pypsa-eur.readthedocs.io)
-and in the paper
-[PyPSA-Eur: An Open Optimisation Model of the European Transmission
-System](https://arxiv.org/abs/1806.01613), 2018,
-[arXiv:1806.01613](https://arxiv.org/abs/1806.01613).
-The model building routines are defined through a snakemake workflow.
-Please see the [documentation](https://pypsa-eur.readthedocs.io/)
-for installation instructions and other useful information about the snakemake workflow.
-The model is designed to be imported into the open toolbox
-[PyPSA](https://github.com/PyPSA/PyPSA).
+> T. Brown, J. Hörsch, D. Schlachtberger, *PyPSA-Eur: An Open Optimisation Model
+> of the European Transmission System*, 2018,
+> [arXiv:1806.01613](https://arxiv.org/abs/1806.01613).
 
-> [!NOTE]
-> PyPSA-Eur has many contributors, with the maintenance currently led by the [Department of Digital Transformation in
-> Energy Systems](https://tu.berlin/en/ensys) at the [Technical University of
-> Berlin](https://www.tu.berlin).
-> Previous versions were developed at the [Karlsruhe
-> Institute of Technology](http://www.kit.edu/english/index.php) funded by the
-> [Helmholtz Association](https://www.helmholtz.de/en/).
+## Scenarios
 
-> [!WARNING]
-> PyPSA-Eur is under active development and has several
-> [limitations](https://pypsa-eur.readthedocs.io/en/latest/limitations.html) which
-> you should understand before using the model. The github repository
-> [issues](https://github.com/PyPSA/pypsa-eur/issues) collect known topics we are
-> working on (please feel free to help or make suggestions). The
-> [documentation](https://pypsa-eur.readthedocs.io/) remains somewhat patchy. You
-> can find showcases of the model's capabilities in the Joule paper [The potential
-> role of a hydrogen network in
-> Europe](https://doi.org/10.1016/j.joule.2023.06.016), another [paper in Joule
-> with a description of the industry
-> sector](https://doi.org/10.1016/j.joule.2022.04.016), or in [a 2021 presentation
-> at EMP-E](https://nworbmot.org/energy/brown-empe.pdf). We do not recommend to
-> use the full resolution network model for simulations. At high granularity the
-> assignment of loads and generators to the nearest network node may not be a
-> correct assumption, depending on the topology of the underlying distribution
-> grid, and local grid bottlenecks may cause unrealistic load-shedding or
-> generator curtailment. We recommend to cluster the network to a couple of
-> hundred nodes to remove these local inconsistencies. See the discussion in
-> Section 3.4 "Model validation" of the paper.
+Two scenarios are implemented, each run for planning horizons **2030, 2040, 2050**
+using myopic foresight:
 
+| Parameter | `ref` (Reference) | `suff` (Sufficiency) |
+|---|---|---|
+| Snakefile | `Snakefile_ref` | `Snakefile_suff` |
+| Config file | `config/config_ref.yaml` | `config/config_suff.yaml` |
+| Demand profile | Standard PyPSA-Eur | Reduced demand (`suff_demand: true`) |
+| District heating potential | Default | Disabled (`potential: 0.0`) |
+| Countries | BE, DE, FR, GB, NL | BE, DE, FR, GB, NL |
+| Spatial resolution | Administrative regions (`adm`) | Administrative regions (`adm`) |
+| Temporal resolution | 6-hourly (1 460 snapshots/year) | 6-hourly (1 460 snapshots/year) |
+| CO2 budget | National per-country (`co2_budget_national: true`) | National per-country |
+| CCL constraint | Enabled | Enabled |
 
-![PyPSA-Eur Grid Model](doc/img/elec.png)
+### Reference scenario (`ref`)
 
-The dataset consists of:
+The reference scenario represents a cost-optimal decarbonisation pathway with
+standard demand assumptions. It includes:
 
-- A grid model based on a modified [GridKit](https://github.com/bdw/GridKit)
-  extraction of the [ENTSO-E Transmission System
-  Map](https://www.entsoe.eu/data/map/). The grid model contains 7072 lines
-  (alternating current lines at and above 220kV voltage level and all high
-  voltage direct current lines) and 3803 substations.
-- The open power plant database
-  [powerplantmatching](https://github.com/PyPSA/powerplantmatching).
-- Electrical demand time series from the
-  [OPSD project](https://open-power-system-data.org/).
-- Renewable time series based on ERA5 and SARAH, assembled using the [atlite tool](https://github.com/PyPSA/atlite).
-- Geographical potentials for wind and solar generators based on land use (CORINE) and excluding nature reserves (Natura2000) are computed with the [atlite library](https://github.com/PyPSA/atlite).
+- Full sector coupling (electricity, heat, transport, industry, hydrogen)
+- CO2 sequestration potential capped at 40 Mt in 2030, 180 Mt in 2040, 250 Mt in 2050
+- Imposed constraints for Belgium: battery storage minimum (4 GWh in 2030),
+  minimum electrolyser capacity (150 MW in 2030), DAC capacity limits in 2040/2050
+- TYNDP-based transmission expansion constraints
 
-A sector-coupled extension adds demand
-and supply for the following sectors: transport, space and water
-heating, biomass, industry and industrial feedstocks, agriculture,
-forestry and fishing. This completes the energy system and includes
-all greenhouse gas emitters except waste management and land use.
+### Sufficiency scenario (`suff`)
 
-This diagram gives an overview of the sectors and the links between
-them:
+The sufficiency scenario assumes reduced energy demand consistent with sufficiency
+policies. Key differences from the reference:
 
-![sector diagram](doc/img/multisector_figure.png)
+- Reduced end-use demands via `suff_demand: true`
+- District heating potential set to zero (`potential: 0.0`)
+- Otherwise identical modelling assumptions
 
-Each of these sectors is built up on the transmission network nodes
-from [PyPSA-Eur](https://github.com/PyPSA/pypsa-eur):
+## Repository Structure
 
-![network diagram](https://github.com/PyPSA/pypsa-eur/blob/master/doc/img/base.png?raw=true)
+```
+.
+├── Snakefile_ref           # Master workflow for the ref scenario
+├── Snakefile_suff          # Master workflow for the suff scenario
+├── Snakefile_master        # Shared master Snakefile (called by both above)
+├── config/
+│   ├── config_ref.yaml     # Configuration for the ref scenario
+│   ├── config_suff.yaml    # Configuration for the suff scenario
+│   └── config.default.yaml # Default PyPSA-Eur configuration (reference)
+├── rules/                  # Snakemake rule definitions
+│   ├── build_electricity.smk
+│   ├── build_sector.smk
+│   ├── solve_myopic.smk
+│   ├── postprocess.smk
+│   └── ...
+├── scripts/                # Python scripts for each workflow step
+│   ├── prepare_sector_network.py   # Network preparation (adds sector components)
+│   ├── solve_network.py            # LP optimisation wrapper
+│   └── ...
+├── data/                   # Static input data
+├── cutouts/                # Atlite weather cutouts (downloaded automatically)
+├── resources/              # Intermediate build artefacts (generated)
+└── results/                # Final solved networks and plots (generated)
+```
 
-For computational reasons the model is usually clustered down
-to 50-200 nodes.
+## Installation
 
-Already-built versions of the model can be found in the accompanying [Zenodo
-repository](https://doi.org/10.5281/zenodo.3601881).
+### Prerequisites
 
-# Contributing and Support
-We strongly welcome anyone interested in contributing to this project. If you have any ideas, suggestions or encounter problems, feel invited to file issues or make pull requests on GitHub.
--   To **discuss** with other PyPSA users, organise projects, share news, and get in touch with the community you can use the [Discord server](https://discord.gg/AnuJBk23FU).
--   For **bugs and feature requests**, please use the [PyPSA-Eur Github Issues page](https://github.com/PyPSA/pypsa-eur/issues).
+- [Pixi](https://pixi.sh) or [Conda/Mamba](https://conda.io) for environment management
+- A valid [Gurobi licence](https://www.gurobi.com) (academic licence is sufficient)
+- ~50 GB disk space for cutouts and intermediate files
 
-# Licence
+### Environment setup
 
-The code in PyPSA-Eur is released as free software under the
-[MIT License](https://opensource.org/licenses/MIT), see [`doc/licenses.rst`](doc/licenses.rst).
-However, different licenses and terms of use may apply to the various
-input data, see [`doc/data_sources.rst`](doc/data_sources.rst).
+Using pixi (recommended):
+
+```bash
+pixi install
+```
+
+Or using conda with the provided environment file:
+
+```bash
+conda env create -f envs/environment.yaml
+conda activate pypsa-eur
+```
+
+### Gurobi licence
+
+The workflow is configured to use Gurobi. A free academic licence can be obtained at
+<https://www.gurobi.com/academia/academic-program-and-licenses/>.
+
+Place the licence file at `~/gurobi.lic` or set the `GRB_LICENSE_FILE` environment
+variable accordingly.
+
+> **Warning**: The solver settings in both config files use `NumericFocus: 3`,
+> `BarHomogeneous: 1`, and `DualReductions: 0` to handle the large, numerically
+> challenging sector-coupled models. Do not change these without understanding the
+> implications — in particular, `DualReductions: 0` is required to prevent Gurobi
+> from incorrectly reporting infeasibility before solving.
+
+## Running the Workflow
+
+### Reference scenario
+
+```bash
+conda run -n pypsa-eur snakemake \
+    --snakefile Snakefile_ref \
+    --cores 20 \
+    -call
+```
+
+### Sufficiency scenario
+
+```bash
+conda run -n pypsa-eur snakemake \
+    --snakefile Snakefile_suff \
+    --cores 20 \
+    -call
+```
+
+### Dry run (check what would be executed)
+
+```bash
+conda run -n pypsa-eur snakemake \
+    --snakefile Snakefile_ref \
+    --cores 20 \
+    -n
+```
+
+### Reducing runtime for testing
+
+The temporal resolution is controlled by the `sector_opts` entry in each config
+file.  The default value `6h` gives 1 460 snapshots per year (one per 6-hour
+block), which is a good balance between accuracy and solve time.  To run a faster
+test:
+
+1. Open `config/config_suff.yaml` (or `config_ref.yaml`) and change:
+   ```yaml
+   sector_opts:
+     - "6h"    # default — change to "24h" for a quick test
+   ```
+2. A `24h` time step reduces snapshots to 365/year and cuts solve time by
+   roughly 4×.  Note that this also re-triggers all upstream rules that build
+   the time-resolved profiles (e.g. `prepare_sector_network`), so a full
+   rebuild from intermediate files is needed when switching resolutions.
+3. The `sector_opts` string is embedded in all intermediate and result file
+   names (e.g. `base_s_adm__6h_2030.*`), so results at different resolutions
+   coexist safely in the `results/` folder without overwriting each other.
+
+### Logs
+
+Snakemake job logs are written to `logs/`. Solver logs for each network solve are at
+`results/{scenario}/logs/{network}_solver.log`. Python logs are at
+`results/{scenario}/logs/{network}_python.log`.
+
+## Known Issues and Warnings
+
+### linopy version pin — do not upgrade beyond 0.6.1
+
+linopy 0.7.0 introduced a performance improvement in LP file writing
+(`perf: speed up LP file writing`) that changed how `inf` bounds in PyPSA network
+data structures are translated into LP variable bounds.  With linopy ≥ 0.7.0 the
+resulting LP formulation contains **~12 000–15 000 truly free variables** (bounds
+`[−∞, +∞]`) per planning horizon, causing:
+
+- Gurobi to report **"Unbounded model"** for the `co2 atmosphere` and CO2
+  sequestration stores (the specific subsections below document each case)
+- **10–15× longer solve times** even after those individual fixes, because the
+  remaining free variables degrade the barrier algorithm
+- **Sub-optimal termination** in some horizons and incorrect dual variables /
+  shadow prices as numerical artefacts
+
+`envs/environment.yaml` therefore pins `linopy =0.6.1`, which produces a clean LP
+with zero free variables reported by Gurobi.  All planning horizons then solve to
+certified optimality in 230–530 s.  The individual `solve_network.py` fixes
+documented below are still physically correct and are kept as defence-in-depth, but
+they are **not sufficient** on their own to fix the linopy 0.7.0 regression.
+
+> **Do not upgrade linopy** without verifying that the LP-writing regression
+> introduced in 0.7.0 has been fixed upstream.
+
+### Unbounded LP — co2 atmosphere store (suff and ref, all planning horizons)
+
+The `co2 atmosphere` store is non-extendable and physically should hold all
+remaining atmospheric CO2 (a very large but finite stock). In the raw network it
+is initialised with `e_nom = inf` and `e_min_pu = -1`, which linopy translates
+into bounds `[−∞, +∞]` for every `Store-e[t]` variable.  Because `noisy_costs`
+gives the store a small positive marginal cost (≈ 0.01 €/tonne), the LP objective
+is unbounded below: pushing `e[t] → −∞` drives the cost to −∞.  Gurobi's
+homogeneous barrier detects this as **"Unbounded model"** after reporting
+`Free vars: 1` (or `Free vars: 10` in the ref scenario).
+
+**Fix (implemented in `prepare_network()`):** set `e_nom = 2×10⁹ t` (2 Gt, well
+above any realistic annual CO₂ budget) and `e_min_pu = 0` (atmosphere stock
+cannot go negative).  The resulting constraint `0 ≤ Store-e[t] ≤ 2e9` is
+finite, Gurobi's presolve eliminates the free variable, and the LP is bounded.
+
+### Unbounded LP — CO2 sequestered stores (ref scenario, all planning horizons)
+
+In the ref scenario, CO2 sequestered stores for DE, FR, GB and NL are extendable
+(`e_nom_extendable = True`) with `e_nom_max = inf` and a negative marginal cost
+(≈ −0.09 €/tonne after `noisy_costs`).  This caused the LP to be unbounded: the
+solver could increase sequestration capacity without limit and drive the objective
+to −∞.
+
+The existing `imposed_values_sequestration()` only capped Belgium's store at 2 Mt.
+The stores for the other four countries remained uncapped.
+
+**Fix (implemented in `imposed_values_sequestration()`):** cap `e_nom_max` for
+DE, FR, GB and NL CO2 sequestered stores at the total EU sequestration potential
+from `sector.co2_sequestration_potential` in `config_ref.yaml` (e.g. 40 Mt for
+2030, 180 Mt for 2040, 250 Mt for 2050).  These per-country caps are conservative
+upper bounds; actual sequestration is further limited by the CO₂ budget and
+economics.
+
+### Note on `add_co2_sequestration_limit()`
+
+The `add_co2_sequestration_limit()` helper is currently **broken**: it passes
+`carrier_attribute="co2 sequestered"` but that column does not exist in
+`n.carriers`, so the computed LHS is always zero and the resulting constraint is
+vacuous.  The function is called but has no effect; the actual sequestration caps
+are enforced by the `e_nom_max` values set in `imposed_values_sequestration()`.
+
+### Gurobi `DualReductions` flag
+
+Setting `DualReductions: 1` (the Gurobi default) can cause Gurobi to incorrectly
+report **infeasibility** for these models due to numerical issues in presolve.
+Both config files set `DualReductions: 0` to avoid this. Do not re-enable it.
+
+### Solver tolerances
+
+The sector-coupled models are large (~3 million constraints, ~1.6 million variables
+before presolve) and numerically challenging. The `gurobi-numeric-focus` option set
+uses relaxed tolerances (`FeasibilityTol: 0.01`, `OptimalityTol: 0.01`,
+`BarConvTol: 1e-3`) to ensure convergence in reasonable time. Tightening these
+tolerances may cause solve failures or very long runtimes.
+
+### Heat vent generators
+
+Heat vent generators (`urban central heat vent`, `rural heat vent`,
+`urban decentral heat vent`) are extendable with `p_nom_max = inf` and a small
+negative marginal cost (−0.02 €/MWh). They are bounded in the LP via
+`p ≤ 0` and `p ≥ −p_nom`, but their large coefficient range contributes to
+numerical difficulties.
+
+### Belgium-specific imposed values
+
+The functions `imposed_values_sequestration()` and `imposed_values_generation()` in
+`scripts/solve_network.py` impose Belgium-specific constraints after
+`prepare_network()` and before the solve:
+
+- Battery storage minimum: 4 GWh in 2030
+- Minimum and maximum H₂ electrolyser capacity: 150 MW in 2030
+- DAC capacity caps for 2040 and 2050 (ref scenario only)
+
+Additionally, `imposed_values_generation()` sets `p_nom_max = inf` for *all*
+generators, overriding any capacity limit set during network preparation. Review
+this function before changing generator capacity assumptions.
+
+## Hardware Requirements
+
+The full workflow (both scenarios, 3 planning horizons each) requires significant
+computational resources:
+
+- **RAM**: ≥ 64 GB recommended (sector-coupled models can exceed 40 GB during solve)
+- **CPU**: 20 threads are configured in `gurobi-numeric-focus`; a machine with
+  ≥ 20 physical cores is recommended
+- **Disk**: ~50 GB for all intermediate files and results
+- **Solve time**: Each planning horizon solve takes approximately 15–60 minutes
+  depending on hardware
+
+## Output
+
+Solved networks are written to `results/{scenario}/networks/` as NetCDF files
+(`.nc`). Summary statistics and plots are produced by the postprocessing rules
+defined in `rules/postprocess.smk` and `rules/collect.smk`.
+
+## Licence
+
+The code in this repository is derived from [PyPSA-Eur](https://github.com/PyPSA/pypsa-eur)
+and inherits its [MIT licence](LICENSES/MIT.txt). Data files retain their original
+licences as documented in [REUSE.toml](REUSE.toml).
