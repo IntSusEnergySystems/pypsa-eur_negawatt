@@ -178,6 +178,63 @@ Snakemake job logs are written to `logs/`. Solver logs for each network solve ar
 `results/{scenario}/logs/{network}_solver.log`. Python logs are at
 `results/{scenario}/logs/{network}_python.log`.
 
+## Running the optimisation on the NIC5 / CÉCI cluster
+
+The LP solve is by far the most memory- and CPU-intensive step. The helper
+scripts in [`cluster/`](cluster/) run **only the solve chain** on NIC5 (the
+`hmem` partition + Gurobi), while everything else stays on your machine. Running
+locally is unaffected — it is still just the `snakemake` commands above.
+
+### Rationale
+
+* NIC5 **compute nodes have no internet**, so the data-download / cutout-build
+  steps cannot run there. Instead, the small un-solved networks are **prepared
+  locally** (where all input data already lives), transferred, solved on the
+  cluster, and the solved networks are pulled back.
+* Gurobi on NIC5 uses a **floating token-server licence** (`nic5-login1`), so the
+  conda `gurobipy` checks out a token automatically — no per-node licence file.
+* Snakemake runs on the **login node** (which has internet, needed to resolve the
+  data-retrieval storage providers when it builds the DAG) and submits each rule
+  to Slurm with its built-in `slurm` executor. The compute nodes then only run
+  the solve script. The time resolution is passed purely as the `sector_opts`
+  Snakemake wildcard, so **no config file is edited**.
+
+### One-time setup
+
+Configure your SSH host and scratch path at the top of
+[`cluster/config.sh`](cluster/config.sh) (defaults target the `nic5` SSH alias and
+`$GLOBALSCRATCH`). Requires CÉCI SSH access (here over the `sqvpn` VPN). Then:
+
+```bash
+./cluster/nic5.sh setup      # installs Miniforge + the pypsa-eur env + Gurobi licence
+```
+
+### Full test run (ref + suff at 1-hour resolution)
+
+```bash
+./cluster/nic5.sh run 1h     # prepare (local) -> push -> solve (Slurm) -> wait -> pull
+```
+
+`run` chains the individual steps, which can also be invoked separately:
+
+| Command | What it does |
+|---------|--------------|
+| `./cluster/nic5.sh prepare 1h` | **local**: builds the un-solved networks (`prepare_sector_network`, `add_existing_baseyear`) at the chosen resolution |
+| `./cluster/nic5.sh push`       | `rsync`s code + prepared `resources/` + `data/` (minus the multi-GB Atlite cutout) to the cluster, plus Snakemake's `.snakemake/metadata` so the solve chain is recognised as up to date |
+| `./cluster/nic5.sh solve 1h`   | launches one login-node Slurm orchestrator per scenario; the myopic chain `solve 2030 → add_brownfield 2040 → solve 2040 → …` is submitted to `hmem` |
+| `./cluster/nic5.sh status`     | shows `squeue` and tails the orchestrator logs |
+| `./cluster/nic5.sh wait`       | blocks until the orchestrators finish |
+| `./cluster/nic5.sh pull`       | `rsync`s the solved `results/` (and logs) back |
+| `./cluster/nic5.sh shell`      | opens an interactive shell in the cluster repo |
+
+Any resolution works the same way, e.g. `./cluster/nic5.sh run 6h`. Solver
+resources (`hmem`, memory, walltime) are set in `cluster/config.sh`; the solver
+thread count comes from the model config (`solving` → `gurobi-numeric-focus`).
+
+> Note: with the strict `gurobi-numeric-focus` settings the 1-hour solve is
+> heavy (order of an hour or more per planning horizon), so a full `ref` + `suff`
+> run spans many hours. Use a coarser resolution (`6h`, `24h`) for quick checks.
+
 ## Known Issues and Warnings
 
 ### linopy version pin — do not upgrade beyond 0.6.1
