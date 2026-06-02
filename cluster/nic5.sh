@@ -15,12 +15,13 @@
 # compute nodes then only run the solve script (Gurobi via the token server).
 #
 #   ./cluster/nic5.sh setup            # one-time: install env on the cluster
-#   ./cluster/nic5.sh run 1h           # full test: prepare+push+solve+wait+pull
+#   ./cluster/nic5.sh run ref 1h       # full test: prepare+push+solve+wait+pull
 #
 # or step by step:
 #   ./cluster/nic5.sh prepare 1h       # LOCAL: build un-solved inputs @1h
 #   ./cluster/nic5.sh push             # rsync code+inputs to the cluster
-#   ./cluster/nic5.sh solve 1h         # submit ref+suff solve jobs (Slurm)
+#   ./cluster/nic5.sh solve ref 1h     # submit ref solve on Slurm
+#   ./cluster/nic5.sh solve suff 1h    # submit suff solve (after ref finishes)
 #   ./cluster/nic5.sh status           # squeue + tail logs
 #   ./cluster/nic5.sh wait             # block until jobs finish
 #   ./cluster/nic5.sh pull             # rsync solved results back
@@ -40,6 +41,21 @@ mkdir -p "$HERE/logs"
 
 msg()  { printf '\033[1;34m[nic5]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[nic5] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Validate scenario argument for solve/run. "all" is reserved but not supported yet.
+resolve_scenario() {
+    case "${1:-}" in
+        ref|suff) echo "$1" ;;
+        all)
+            die "solve all is not supported yet: ref and suff share the same cluster checkout and .snakemake/ state, so launching both orchestrators at once can interfere with each other and with Slurm job tracking. Run them separately:
+  $0 solve ref <res>
+  $0 solve suff <res>"
+            ;;
+        *)
+            die "unknown scenario '$1' (expected ref, suff, or all)"
+            ;;
+    esac
+}
 
 # Build the list of solved-network targets for one scenario / resolution.
 solved_targets() {
@@ -110,35 +126,112 @@ cmd_push() {
 REMOTE_ENV='source $HOME/miniforge3/etc/profile.d/conda.sh && conda activate '"$ENV_NAME"' && unset PYTHONPATH && export GRB_LICENSE_FILE=$HOME/gurobi.lic'
 
 cmd_solve() {
-    local res=${1:?usage: solve <resolution e.g. 1h>}
+    local sc res
+    sc=$(resolve_scenario "${1:?usage: solve <scenario> <resolution>  e.g. solve ref 1h}")
+    res=${2:?usage: solve <scenario> <resolution>  e.g. solve ref 1h}
     : > "$JOBFILE"
-    for sc in $SCENARIOS; do
-        msg "Launching Slurm orchestrator on the login node: scenario=$sc resolution=$res"
-        local targets log pidf
-        targets=$(solved_targets "$sc" "$res" | tr '\n' ' ')
-        log="cluster/logs/orchestrate_${sc}_${res}.log"
-        pidf="cluster/logs/orchestrate_${sc}_${res}.pid"
-        # setsid fully detaches the orchestrator into its own session so the ssh
-        # call returns immediately; the orchestrator keeps running on the login
-        # node and writes its PID to a pidfile.
-        ssh "$REMOTE" "cd '$REMOTE_DIR' && $REMOTE_ENV && \
-            setsid bash -c 'snakemake --snakefile Snakefile_${sc} \
-                --executor slurm --jobs $MAX_SLURM_JOBS \
-                --rerun-triggers mtime --keep-going --printshellcmds --nolock \
-                --default-resources slurm_partition=$DEFAULT_PARTITION runtime=$DEFAULT_RUNTIME mem_mb=$DEFAULT_MEM_MB cpus_per_task=$DEFAULT_CPUS \
-                --set-resources solve_sector_network_myopic:slurm_partition=$SOLVE_PARTITION solve_sector_network_myopic:mem_mb=$SOLVE_MEM_MB solve_sector_network_myopic:runtime=$SOLVE_RUNTIME \
-                -- $targets </dev/null >\"$log\" 2>&1 & echo \$! >\"$pidf\"' </dev/null >/dev/null 2>&1"
-        sleep 2
-        pid=$(ssh "$REMOTE" "cat '$REMOTE_DIR/$pidf' 2>/dev/null" | tr -d '[:space:]')
-        echo "$sc $res ${pid:-unknown}" >> "$JOBFILE"
-        msg "  orchestrator pid ${pid:-unknown} for $sc (log: $log)"
-    done
-    msg "Orchestrators launched. Track with: $0 status"
+    msg "Launching Slurm orchestrator on the login node: scenario=$sc resolution=$res"
+    local targets log pidf pid
+    targets=$(solved_targets "$sc" "$res" | tr '\n' ' ')
+    log="cluster/logs/orchestrate_${sc}_${res}.log"
+    pidf="cluster/logs/orchestrate_${sc}_${res}.pid"
+    # Resource notes (CECI job efficiency):
+    # - Do NOT put cpus_per_task in --default-resources: it overrides Gurobi
+    #   threads for solve jobs. Set solve cpus via --set-resources instead.
+    # - Memory for solve comes from cluster/config_cluster.yaml (200 GB).
+    # - Partition/runtime come from --default-resources (hmem for all rules).
+    ssh "$REMOTE" "cd '$REMOTE_DIR' && $REMOTE_ENV && \
+        setsid bash -c 'snakemake --snakefile Snakefile_${sc} \
+            --executor slurm --jobs $MAX_SLURM_JOBS \
+            --configfile cluster/config_cluster.yaml \
+            --rerun-triggers mtime --keep-going --printshellcmds \
+            --default-resources slurm_partition=$SOLVE_PARTITION runtime=$SOLVE_RUNTIME mem_mb=$DEFAULT_MEM_MB \
+            --set-resources solve_sector_network_myopic:cpus_per_task=$SOLVE_CPUS \
+            --set-resources add_brownfield:cpus_per_task=1 \
+            -- $targets </dev/null >\"$log\" 2>&1 & echo \$! >\"$pidf\"' </dev/null >/dev/null 2>&1"
+    sleep 2
+    pid=$(ssh "$REMOTE" "cat '$REMOTE_DIR/$pidf' 2>/dev/null" | tr -d '[:space:]')
+    echo "$sc $res ${pid:-unknown}" >> "$JOBFILE"
+    msg "  orchestrator pid ${pid:-unknown} for $sc (log: $log)"
+    msg "Track with: $0 status"
+}
+
+cmd_stop() {
+    msg "Cancelling Slurm jobs and orchestrators on $REMOTE"
+    ssh "$REMOTE" "scancel -u \$(whoami) 2>/dev/null; pkill -f 'bin/snakemake --snakefile' 2>/dev/null || true"
+    msg "Stop signalled."
+}
+
+# Query live CPU/RSS per thread on compute nodes (same idea as
+#   ssh <node> "top -b -n 1 -u \$USER -H"
+# but scoped to each Slurm job via its cgroup).
+status_job_usage() {
+    ssh "$REMOTE" 'bash -s' <<'REMOTE'
+set -uo pipefail
+running=$(squeue --me -h -t RUNNING -o "%i|%N|%j|%C|%m" 2>/dev/null || true)
+if [ -z "$running" ]; then
+    echo "(no running Slurm jobs)"
+    exit 0
+fi
+while IFS='|' read -r jobid node name alloc_cpus alloc_mem; do
+    [ -n "$jobid" ] || continue
+    echo "--- job $jobid on $node (alloc: ${alloc_cpus} CPUs, ${alloc_mem}) ---"
+    short=${name:0:40}
+    [ "$short" != "$name" ] && short="${short}..."
+    echo "    name: $short"
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes "$node" bash -s "$jobid" <<'NODE'
+jobid=$1
+mapfile -t job_pids < <(
+    find /sys/fs/cgroup/memory/slurm -path "*job_${jobid}*" -name cgroup.procs \
+        -exec cat {} \; 2>/dev/null | sort -nu
+)
+main_pid="" max_rss=0 main_comm=""
+for pid in "${job_pids[@]}"; do
+    [ -r "/proc/$pid/status" ] || continue
+    rss=$(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status" 2>/dev/null)
+    comm=$(awk '/^Name:/ {print $2}' "/proc/$pid/status" 2>/dev/null)
+    if [ "${rss:-0}" -gt "$max_rss" ]; then
+        max_rss=$rss
+        main_pid=$pid
+        main_comm=$comm
+    fi
+done
+if [ -z "$main_pid" ]; then
+    echo "    (no processes in cgroup yet)"
+    exit 0
+fi
+echo "    process: pid=$main_pid ($main_comm), VmRSS=$((max_rss / 1024)) MiB"
+echo "    threads (top -b -n 1 -H -p $main_pid):"
+printf "    %-10s %6s %6s %10s %5s %s\n" "TID" "%CPU" "%MEM" "RSS" "S" "COMMAND"
+top -b -n 1 -H -p "$main_pid" 2>/dev/null | awk '
+    NR > 7 && $1 ~ /^[0-9]+$/ {
+        printf "    %-10s %6s %6s %10s %5s %s\n", $1, $9, $10, $6, $8, $12
+        cpu += $9 + 0
+        n++
+        if ($8 == "R") r++
+    }
+    END {
+        if (n > 0) {
+            cores = cpu / 100
+            printf "    summary: %d thread(s) (%d running), sum %%CPU=%.1f (~%.1f cores)\n", n, r + 0, cpu, cores
+        }
+    }'
+NODE
+    then
+        :
+    else
+        echo "    (could not reach $node)"
+    fi
+done <<< "$running"
+REMOTE
 }
 
 cmd_status() {
     msg "Slurm queue on $REMOTE (squeue --me):"
     ssh "$REMOTE" "squeue --me --format='%.18i %.10P %.26j %.8T %.10M %R'" 2>/dev/null
+    echo
+    msg "Live CPU / memory per thread (top -H on compute nodes):"
+    status_job_usage
     [ -f "$JOBFILE" ] || return 0
     while read -r sc res pid; do
         echo
@@ -195,10 +288,12 @@ cmd_setup() {
 }
 
 cmd_run() {
-    local res=${1:?usage: run <resolution e.g. 1h>}
+    local sc res
+    sc=$(resolve_scenario "${1:?usage: run <scenario> <resolution>  e.g. run ref 1h}")
+    res=${2:?usage: run <scenario> <resolution>  e.g. run ref 1h}
     cmd_prepare "$res"
     cmd_push
-    cmd_solve "$res"
+    cmd_solve "$sc" "$res"
     cmd_wait
     cmd_pull
 }
@@ -210,22 +305,29 @@ case "${1:-}" in
     prepare) shift; cmd_prepare "$@";;
     push)    shift; cmd_push "$@";;
     solve)   shift; cmd_solve "$@";;
+    stop)    shift; cmd_stop "$@";;
     status)  shift; cmd_status "$@";;
     wait)    shift; cmd_wait "$@";;
     pull)    shift; cmd_pull "$@";;
     run)     shift; cmd_run "$@";;
     shell)   shift; cmd_shell "$@";;
     *) cat <<EOF
-Usage: $0 <command> [resolution]
-  setup              one-time: install conda env + Gurobi licence on the cluster
-  prepare <res>      LOCAL: build un-solved solve inputs at <res> (e.g. 1h)
-  push               rsync code + inputs to the cluster (scratch)
-  solve <res>        submit ref+suff solve jobs on the hmem partition
-  status             show queue and tail job logs
-  wait               block until all submitted jobs finish
-  pull               rsync solved results back into ./results
-  run <res>          prepare + push + solve + wait + pull  (end to end)
-  shell              open an interactive shell in the cluster repo
+Usage: $0 <command> [args...]
+  setup                      one-time: install conda env + Gurobi licence on the cluster
+  prepare <res>              LOCAL: build un-solved solve inputs at <res> (e.g. 1h)
+  push                       rsync code + inputs to the cluster (scratch)
+  solve <scenario> <res>     submit one scenario on hmem (ref or suff; see "all" below)
+  stop                       cancel Slurm jobs and orchestrators on the cluster
+  status                     show queue, per-job thread CPU/RSS, orchestrator logs
+  wait                       block until all submitted jobs finish
+  pull                       rsync solved results back into ./results
+  run <scenario> <res>       prepare + push + solve + wait + pull for one scenario
+  shell                      open an interactive shell in the cluster repo
+
+  Examples:
+    $0 solve ref 1h
+    $0 solve suff 1h
+    $0 solve all 1h          (not supported yet — runs ref then suff separately instead)
 EOF
        exit 1;;
 esac

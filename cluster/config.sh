@@ -19,23 +19,21 @@ GUROBI_LIC="${GUROBI_LIC:-\$HOME/gurobi.lic}"
 GUROBI_MODULE_LIC="${GUROBI_MODULE_LIC:-/opt/cecisw/arch/easybuild/2023b/software/Gurobi/13.0.0-GCCcore-13.2.0/gurobi.lic}"
 
 # --- Slurm resources --------------------------------------------------------
-# Snakemake runs on the login node (which has internet, needed to resolve the
-# data-retrieval storage providers at DAG-build time) and submits each rule as
-# a Slurm job via the built-in slurm executor. The heavy solve runs on hmem;
-# the light add_brownfield steps run on the default partition.
+# Snakemake runs on the login node and submits each rule to Slurm. See the
+# README section on job efficiency: Slurm --cpus-per-task MUST match Gurobi
+# threads (solving.solver_options.gurobi-numeric-focus.threads = 20).
+# https://support.ceci-hpc.be/doc/SubmittingJobs/JobEfficiency/
 SOLVE_PARTITION="${SOLVE_PARTITION:-hmem}"
-SOLVE_MEM_MB="${SOLVE_MEM_MB:-900000}"   # hmem nodes ~1 TB; 1h runs are memory heavy
-SOLVE_RUNTIME="${SOLVE_RUNTIME:-1440}"   # minutes (max walltime is 2 days)
-# cpus-per-task for the solve is taken from the rule's `threads` (= solver
-# threads, 20 by default), so it does not need to be set here.
-DEFAULT_PARTITION="${DEFAULT_PARTITION:-batch}"
-DEFAULT_MEM_MB="${DEFAULT_MEM_MB:-80000}"
+SOLVE_CPUS="${SOLVE_CPUS:-20}"           # = gurobi-numeric-focus threads
+SOLVE_RUNTIME="${SOLVE_RUNTIME:-1440}"   # minutes
+DEFAULT_PARTITION="${DEFAULT_PARTITION:-hmem}"   # all cluster jobs use hmem
+DEFAULT_MEM_MB="${DEFAULT_MEM_MB:-16000}"      # light rules (add_brownfield)
 DEFAULT_RUNTIME="${DEFAULT_RUNTIME:-180}"
-DEFAULT_CPUS="${DEFAULT_CPUS:-8}"
-MAX_SLURM_JOBS="${MAX_SLURM_JOBS:-4}"
+DEFAULT_CPUS="${DEFAULT_CPUS:-1}"              # light rules only; never set globally for solve
+MAX_SLURM_JOBS="${MAX_SLURM_JOBS:-2}"
 
 # --- scenarios & planning horizons ------------------------------------------
-SCENARIOS="${SCENARIOS:-ref suff}"
+SCENARIOS="${SCENARIOS:-ref suff}"   # used by `prepare` only (both scenarios)
 HORIZONS="${HORIZONS:-2030 2040 2050}"
 CLUSTERS="${CLUSTERS:-adm}"
 OPTS="${OPTS:-}"             # electricity opts wildcard (empty in both configs)

@@ -1,0 +1,4 @@
+# NIC5 cluster overrides (merged by `nic5.sh solve` via --configfile).
+# Keeps local config files untouched.
+solving:
+  mem_mb: 200000

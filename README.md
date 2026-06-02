@@ -212,24 +212,54 @@ Configure your SSH host and scratch path at the top of
 ### Full test run (ref + suff at 1-hour resolution)
 
 ```bash
-./cluster/nic5.sh run 1h     # prepare (local) -> push -> solve (Slurm) -> wait -> pull
+./cluster/nic5.sh run ref 1h   # prepare (local) -> push -> solve -> wait -> pull
 ```
 
 `run` chains the individual steps, which can also be invoked separately:
 
 | Command | What it does |
 |---------|--------------|
-| `./cluster/nic5.sh prepare 1h` | **local**: builds the un-solved networks (`prepare_sector_network`, `add_existing_baseyear`) at the chosen resolution |
+| `./cluster/nic5.sh prepare 1h` | **local**: builds the un-solved networks (`prepare_sector_network`, `add_existing_baseyear`) for **both** scenarios at the chosen resolution |
 | `./cluster/nic5.sh push`       | `rsync`s code + prepared `resources/` + `data/` (minus the multi-GB Atlite cutout) to the cluster, plus Snakemake's `.snakemake/metadata` so the solve chain is recognised as up to date |
-| `./cluster/nic5.sh solve 1h`   | launches one login-node Slurm orchestrator per scenario; the myopic chain `solve 2030 → add_brownfield 2040 → solve 2040 → …` is submitted to `hmem` |
-| `./cluster/nic5.sh status`     | shows `squeue` and tails the orchestrator logs |
-| `./cluster/nic5.sh wait`       | blocks until the orchestrators finish |
+| `./cluster/nic5.sh solve ref 1h` | launches the `ref` Slurm orchestrator; each solve job gets **20 CPUs / 200 GB on `hmem`** |
+| `./cluster/nic5.sh solve suff 1h` | same for the `suff` scenario (run after `ref` finishes) |
+| `./cluster/nic5.sh stop`       | cancel all your Slurm jobs and Snakemake orchestrators on the cluster |
+| `./cluster/nic5.sh status`     | shows `squeue`, **live per-thread CPU/RSS** on compute nodes (`top -H`, scoped per Slurm job), and tails orchestrator logs |
+| `./cluster/nic5.sh wait`       | blocks until the orchestrators recorded in `.last_jobs` finish |
 | `./cluster/nic5.sh pull`       | `rsync`s the solved `results/` (and logs) back |
 | `./cluster/nic5.sh shell`      | opens an interactive shell in the cluster repo |
 
-Any resolution works the same way, e.g. `./cluster/nic5.sh run 6h`. Solver
-resources (`hmem`, memory, walltime) are set in `cluster/config.sh`; the solver
-thread count comes from the model config (`solving` → `gurobi-numeric-focus`).
+`./cluster/nic5.sh solve all 1h` is reserved but **not supported yet**: `ref` and `suff` share the same cluster checkout and `.snakemake/` state, so concurrent orchestrators can interfere. Run them separately as above.
+
+Any resolution works the same way, e.g. `./cluster/nic5.sh run ref 6h`.
+
+### Slurm resource settings (job efficiency)
+
+CECI expects Slurm allocations to match what the job actually uses — see the
+[CECI job efficiency guide](https://support.ceci-hpc.be/doc/SubmittingJobs/JobEfficiency/).
+
+| What | Value | Why |
+|------|-------|-----|
+| Slurm `--cpus-per-task` | **20** | Must equal `solving.solver_options.gurobi-numeric-focus.threads` in `config/config_*.yaml`. Requesting fewer CPUs (e.g. 8) while Gurobi spawns 20 threads causes oversubscription and poor CPU utilisation. |
+| Slurm memory | **200 GB** | Observed ~145 GB for 1 h solves; set in `cluster/config_cluster.yaml` (do not over-reserve 900 GB). |
+| Partition | **`hmem`** | Memory-heavy LP solve |
+
+These are applied automatically by `./cluster/nic5.sh solve <scenario>`. To change them,
+edit [`cluster/config.sh`](cluster/config.sh) (`SOLVE_CPUS`, `SOLVE_PARTITION`)
+and [`cluster/config_cluster.yaml`](cluster/config_cluster.yaml) (`solving.mem_mb`).
+
+If you change the Gurobi thread count in the YAML configs, update `SOLVE_CPUS`
+to the same value.
+
+To cancel a run in progress: `./cluster/nic5.sh stop`
+
+For a full `ref` + `suff` test at the same resolution, run one scenario at a time:
+
+```bash
+./cluster/nic5.sh solve ref 1h    # wait until done
+./cluster/nic5.sh solve suff 1h
+```
+
 
 > Note: with the strict `gurobi-numeric-focus` settings the 1-hour solve is
 > heavy (order of an hour or more per planning horizon), so a full `ref` + `suff`
