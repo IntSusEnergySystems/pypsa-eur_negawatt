@@ -1,10 +1,19 @@
 # NIC5 cluster overrides (merged by `nic5.sh solve` via --configfile).
 # Local config_ref.yaml / config_suff.yaml are unchanged.
+#
+# Solver preset for cluster solves (overrides solving.solver.options in scenario configs):
+#   gurobi-default       — standard Gurobi tolerances (faster; cluster default below)
+#   gurobi-numeric-focus — relaxed tolerances for hard sector-coupled models (local default)
 solving:
   mem_mb: 500000
   # Slurm cpus-per-task for solve jobs (= Gurobi threads via anchor below)
-  cpus: &cluster_cpus 20
+  cpus: &cluster_cpus 30
+  solver:
+    options: gurobi-default
   solver_options:
+    gurobi-default:
+      threads: *cluster_cpus
+      DualReductions: 0
     gurobi-numeric-focus:
       threads: *cluster_cpus
     gurobi-fallback:

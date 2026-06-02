@@ -24,8 +24,9 @@ GUROBI_MODULE_LIC="${GUROBI_MODULE_LIC:-/opt/cecisw/arch/easybuild/2023b/softwar
 
 # --- Slurm resources --------------------------------------------------------
 # Snakemake runs on the login node and submits each rule to Slurm. Solve-job
-# CPUs and Gurobi threads are set in cluster/config_cluster.yaml (solving.cpus
-# and matching solver_options threads). See the README job-efficiency section:
+# Solve-job CPUs, Gurobi threads, and solver preset are set in
+# cluster/config_cluster.yaml (solving.cpus, solving.solver.options, and matching
+# solver_options threads). See the README job-efficiency section:
 # https://support.ceci-hpc.be/doc/SubmittingJobs/JobEfficiency/
 SOLVE_PARTITION="${SOLVE_PARTITION:-hmem}"
 SOLVE_RUNTIME="${SOLVE_RUNTIME:-1440}"   # minutes
@@ -43,5 +44,6 @@ OPTS="${OPTS:-}"             # electricity opts wildcard (empty in both configs)
 
 # --- local conda invocation --------------------------------------------------
 # How to run the local environment (used by `nic5.sh prepare`).
-LOCAL_RUN="${LOCAL_RUN:-conda run -n pypsa-eur}"
+# --no-capture-output: stream Snakemake progress to the terminal (conda run buffers by default).
+LOCAL_RUN="${LOCAL_RUN:-conda run --no-capture-output -n pypsa-eur}"
 LOCAL_CORES="${LOCAL_CORES:-8}"

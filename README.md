@@ -214,6 +214,7 @@ Configure your SSH host and scratch path at the top of
 | Command | What it does |
 |---------|--------------|
 | `./cluster/nic5.sh prepare 1h` | **local**: builds the un-solved networks (`prepare_sector_network`, `add_existing_baseyear`) for **both** scenarios at the chosen resolution |
+| `./cluster/nic5.sh prepare ref 1h` | same, but **one scenario only** (used automatically by `run ref 1h`) |
 | `./cluster/nic5.sh push`       | `rsync`s code + prepared `resources/` + `data/` (minus the multi-GB Atlite cutout) to the cluster, plus Snakemake's `.snakemake/metadata` so the solve chain is recognised as up to date |
 | `./cluster/nic5.sh solve ref 1h` | launches the `ref` Slurm orchestrator; each solve job gets **20 CPUs / 200 GB on `hmem`** |
 | `./cluster/nic5.sh solve suff 1h` | same for the `suff` scenario (run after `ref` finishes) |
@@ -225,6 +226,12 @@ Configure your SSH host and scratch path at the top of
 | `./cluster/nic5.sh shell`      | opens an interactive shell in the cluster repo |
 
 `./cluster/nic5.sh solve all 1h` is reserved but **not supported yet**: `ref` and `suff` share the same cluster checkout and `.snakemake/` state, so concurrent orchestrators can interfere. Run them separately as above.
+
+**Progress during `prepare`:** Snakemake output is streamed to the terminal and
+tee'd to `cluster/logs/prepare_<scenario>_<res>.log`. While a run is in progress
+you can also watch `.snakemake/log/` (latest `*.snakemake.log`) or per-rule logs
+under `logs/<scenario>/`. At 1h resolution, prepare rebuilds many upstream profile
+rules (~100+ steps) before the six solve-input targets — this can take hours.
 
 Any resolution works the same way, e.g. `./cluster/nic5.sh run ref 6h` (includes `postprocess` after `pull`).
 
@@ -245,11 +252,45 @@ CECI expects Slurm allocations to match what the job actually uses — see the
 
 | What | Value | Why |
 |------|-------|-----|
-| Slurm `--cpus-per-task` | **20** | Set via `solving.cpus` in [`cluster/config_cluster.yaml`](cluster/config_cluster.yaml); the same file overrides `gurobi-numeric-focus.threads` on the cluster only. Must match Gurobi thread count (CECI [job efficiency](https://support.ceci-hpc.be/doc/SubmittingJobs/JobEfficiency/)). |
+| Slurm `--cpus-per-task` | **30** | Set via `solving.cpus` in [`cluster/config_cluster.yaml`](cluster/config_cluster.yaml); the same file sets `solving.solver.options` and matching `solver_options.*.threads` on the cluster only. Must match Gurobi thread count (CECI [job efficiency](https://support.ceci-hpc.be/doc/SubmittingJobs/JobEfficiency/)). |
 | Slurm memory | **500 GB** | Set via `solving.mem_mb` in `cluster/config_cluster.yaml` (local configs keep their own values). |
 | Partition | **`hmem`** | Memory-heavy LP solve |
 
 These are applied automatically by `./cluster/nic5.sh solve <scenario>`. To change solve CPUs or memory, edit [`cluster/config_cluster.yaml`](cluster/config_cluster.yaml) (`solving.cpus`, `solving.mem_mb`). Slurm partition and runtime defaults live in [`cluster/config.sh`](cluster/config.sh).
+
+### Solver preset (cluster vs local)
+
+Scenario configs (`config/config_ref.yaml`, `config/config_suff.yaml`) use
+`gurobi-numeric-focus` for local runs — relaxed tolerances
+(`FeasibilityTol`/`OptimalityTol` 0.01, `NumericFocus: 3`) that help the large
+sector-coupled models converge. Cluster solves merge
+[`cluster/config_cluster.yaml`](cluster/config_cluster.yaml), which **overrides**
+the solver preset without touching the local configs.
+
+To run cluster solves with standard Gurobi settings instead (typically faster,
+but may fail or terminate sub-optimally on hard horizons), set in
+`cluster/config_cluster.yaml`:
+
+```yaml
+solving:
+  solver:
+    options: gurobi-default
+```
+
+To restore strict numerics on the cluster, switch back to `gurobi-numeric-focus`.
+Thread count is always taken from `solving.cpus` in the same file (applied to
+whichever preset is active).
+
+For a **local** full workflow with the same cluster solver settings (no NIC5),
+pass the overlay to Snakemake:
+
+```bash
+snakemake --snakefile Snakefile_ref --cores 30 -call \
+  --configfile cluster/config_cluster.yaml
+```
+
+(`prepare` / `postprocess` in `nic5.sh` do not use this overlay — only the
+cluster `solve` step does, which is where Gurobi runs.)
 
 To cancel a run in progress: `./cluster/nic5.sh stop`
 
@@ -261,9 +302,10 @@ For a full `ref` + `suff` test at the same resolution, run one scenario at a tim
 ```
 
 
-> Note: with the strict `gurobi-numeric-focus` settings the 1-hour solve is
-> heavy (order of an hour or more per planning horizon), so a full `ref` + `suff`
-> run spans many hours. Use a coarser resolution (`6h`, `24h`) for quick checks.
+> Note: with `gurobi-numeric-focus` the 1-hour solve is heavy (order of an hour
+> or more per planning horizon), so a full `ref` + `suff` run spans many hours.
+> The cluster default in `cluster/config_cluster.yaml` uses `gurobi-default`
+> instead for faster solves; use a coarser resolution (`6h`, `24h`) for quick checks.
 
 ## Known Issues and Warnings
 

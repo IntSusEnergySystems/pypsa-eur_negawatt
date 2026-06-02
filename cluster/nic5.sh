@@ -128,15 +128,32 @@ prepare_targets() {
 }
 
 cmd_prepare() {
-    local res=${1:?usage: prepare <resolution e.g. 1h>}
-    for sc in $SCENARIOS; do
-        msg "Preparing un-solved inputs for '$sc' @ $res (local)"
-        # shellcheck disable=SC2046
+    local sc_filter="" res
+    if [ "${1:-}" = ref ] || [ "${1:-}" = suff ]; then
+        sc_filter=$1
+        res=${2:?usage: prepare [scenario] <resolution e.g. 1h>}
+    else
+        res=${1:?usage: prepare [scenario] <resolution e.g. 1h>}
+    fi
+    local scenarios targets log
+    if [ -n "$sc_filter" ]; then
+        scenarios=$sc_filter
+    else
+        scenarios=$SCENARIOS
+    fi
+    for sc in $scenarios; do
+        log="$HERE/logs/prepare_${sc}_${res}.log"
+        targets=$(prepare_targets "$sc" "$res" | tr '\n' ' ')
+        msg "Preparing un-solved inputs for '$sc' @ $res (local, $LOCAL_CORES cores)"
+        msg "  targets: $targets"
+        msg "  log: $log  (also: $REPO/.snakemake/log/ and $REPO/logs/${sc}/)"
+        # shellcheck disable=SC2086
         ( cd "$REPO" && $LOCAL_RUN snakemake \
             --snakefile "Snakefile_${sc}" \
             --cores "$LOCAL_CORES" \
             --rerun-triggers mtime \
-            -- $(prepare_targets "$sc" "$res") )
+            --printshellcmds \
+            -- $targets ) 2>&1 | tee "$log"
     done
     msg "Local preparation complete."
 }
@@ -185,7 +202,7 @@ cmd_solve() {
     # Resource notes (CECI job efficiency):
     # - Do NOT put cpus_per_task in --default-resources: it overrides Gurobi
     #   threads for solve jobs. Set solve cpus via --set-resources instead.
-    # - Memory and Gurobi threads come from cluster/config_cluster.yaml.
+    # - Memory, solver preset, and Gurobi threads come from cluster/config_cluster.yaml.
     # - Partition/runtime come from --default-resources (hmem for all rules).
     rssh "cd '$REMOTE_DIR' && $REMOTE_ENV && \
         setsid bash -c 'snakemake --snakefile Snakefile_${sc} \
@@ -414,7 +431,7 @@ cmd_run() {
     local sc res
     sc=$(resolve_scenario "${1:?usage: run <scenario> <resolution>  e.g. run ref 1h}")
     res=${2:?usage: run <scenario> <resolution>  e.g. run ref 1h}
-    cmd_prepare "$res"
+    cmd_prepare "$sc" "$res"
     cmd_push
     cmd_solve "$sc" "$res"
     cmd_wait
@@ -439,7 +456,7 @@ case "${1:-}" in
     *) cat <<EOF
 Usage: $0 <command> [args...]
   setup                      one-time: install conda env + Gurobi licence on the cluster
-  prepare <res>              LOCAL: build un-solved solve inputs at <res> (e.g. 1h)
+  prepare [scenario] <res>   LOCAL: build un-solved solve inputs at <res> (both scenarios if omitted)
   push                       rsync code + inputs to the cluster (scratch)
   solve <scenario> <res>     submit one scenario on hmem (ref or suff; see "all" below)
   stop                       cancel Slurm jobs and orchestrators on the cluster
