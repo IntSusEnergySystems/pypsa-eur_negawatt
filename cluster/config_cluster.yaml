@@ -1,4 +1,11 @@
 # NIC5 cluster overrides (merged by `nic5.sh solve` via --configfile).
-# Keeps local config files untouched.
+# Local config_ref.yaml / config_suff.yaml are unchanged.
 solving:
-  mem_mb: 200000
+  mem_mb: 500000
+  # Slurm cpus-per-task for solve jobs (= Gurobi threads via anchor below)
+  cpus: &cluster_cpus 20
+  solver_options:
+    gurobi-numeric-focus:
+      threads: *cluster_cpus
+    gurobi-fallback:
+      threads: *cluster_cpus

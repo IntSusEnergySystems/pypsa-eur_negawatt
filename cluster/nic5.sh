@@ -42,6 +42,16 @@ mkdir -p "$HERE/logs"
 msg()  { printf '\033[1;34m[nic5]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[nic5] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# shellcheck disable=SC2086
+rssh() { ssh $SSH_OPTS "$REMOTE" "$@"; }
+# shellcheck disable=SC2086
+rssync() { rsync -e "ssh $SSH_OPTS" "$@"; }
+
+# Read solving.cpus from cluster/config_cluster.yaml (Slurm cpus-per-task).
+cluster_cpus() {
+    awk '/^solving:/{s=1} s && /^  cpus:/{print $NF; exit}' "$HERE/config_cluster.yaml"
+}
+
 # Validate scenario argument for solve/run. "all" is reserved but not supported yet.
 resolve_scenario() {
     case "${1:-}" in
@@ -98,7 +108,7 @@ cmd_prepare() {
 
 cmd_push() {
     msg "Syncing repo + inputs to ${REMOTE}:${REMOTE_DIR}"
-    ssh "$REMOTE" "mkdir -p '$REMOTE_DIR'"
+    rssh "mkdir -p '$REMOTE_DIR'"
     # Everything except the build-only Atlite cutout (several GB, never read by
     # the solve chain) is transferred. Keeping the rest of data/ avoids missing
     # intermediate inputs that would otherwise make Snakemake try to rebuild
@@ -106,7 +116,7 @@ cmd_push() {
     # rsync preserves mtimes, so the pre-built prepared networks stay "current"
     # and only the solve chain runs. The first push is slow (~4 GB over the
     # VPN); subsequent pushes are incremental and fast.
-    rsync -arh --no-g -e ssh \
+    rssync -arh --no-g \
         --exclude '.git' --exclude '.snakemake' --exclude '.pixi' \
         --exclude 'results' --exclude '__pycache__' --exclude '*.pyc' \
         --exclude 'cluster/logs' --exclude 'cutouts' --exclude 'data/cutout' \
@@ -116,8 +126,8 @@ cmd_push() {
     # resources stale (triggering rebuilds/downloads). With it, only the solve
     # chain runs.
     if [ -d "$REPO/.snakemake/metadata" ]; then
-        ssh "$REMOTE" "mkdir -p '$REMOTE_DIR/.snakemake'"
-        rsync -arh --no-g -e ssh "$REPO/.snakemake/metadata" "${REMOTE}:${REMOTE_DIR}/.snakemake/"
+        rssh "mkdir -p '$REMOTE_DIR/.snakemake'"
+        rssync -arh --no-g "$REPO/.snakemake/metadata" "${REMOTE}:${REMOTE_DIR}/.snakemake/"
     fi
     msg "Push complete."
 }
@@ -126,11 +136,13 @@ cmd_push() {
 REMOTE_ENV='source $HOME/miniforge3/etc/profile.d/conda.sh && conda activate '"$ENV_NAME"' && unset PYTHONPATH && export GRB_LICENSE_FILE=$HOME/gurobi.lic'
 
 cmd_solve() {
-    local sc res
+    local sc res solve_cpus
     sc=$(resolve_scenario "${1:?usage: solve <scenario> <resolution>  e.g. solve ref 1h}")
     res=${2:?usage: solve <scenario> <resolution>  e.g. solve ref 1h}
+    solve_cpus=$(cluster_cpus)
+    [ -n "$solve_cpus" ] || die "solving.cpus not set in cluster/config_cluster.yaml"
     : > "$JOBFILE"
-    msg "Launching Slurm orchestrator on the login node: scenario=$sc resolution=$res"
+    msg "Launching Slurm orchestrator on the login node: scenario=$sc resolution=$res cpus=$solve_cpus"
     local targets log pidf pid
     targets=$(solved_targets "$sc" "$res" | tr '\n' ' ')
     log="cluster/logs/orchestrate_${sc}_${res}.log"
@@ -138,19 +150,19 @@ cmd_solve() {
     # Resource notes (CECI job efficiency):
     # - Do NOT put cpus_per_task in --default-resources: it overrides Gurobi
     #   threads for solve jobs. Set solve cpus via --set-resources instead.
-    # - Memory for solve comes from cluster/config_cluster.yaml (200 GB).
+    # - Memory and Gurobi threads come from cluster/config_cluster.yaml.
     # - Partition/runtime come from --default-resources (hmem for all rules).
-    ssh "$REMOTE" "cd '$REMOTE_DIR' && $REMOTE_ENV && \
+    rssh "cd '$REMOTE_DIR' && $REMOTE_ENV && \
         setsid bash -c 'snakemake --snakefile Snakefile_${sc} \
             --executor slurm --jobs $MAX_SLURM_JOBS \
             --configfile cluster/config_cluster.yaml \
             --rerun-triggers mtime --keep-going --printshellcmds \
             --default-resources slurm_partition=$SOLVE_PARTITION runtime=$SOLVE_RUNTIME mem_mb=$DEFAULT_MEM_MB \
-            --set-resources solve_sector_network_myopic:cpus_per_task=$SOLVE_CPUS \
+            --set-resources solve_sector_network_myopic:cpus_per_task=$solve_cpus \
             --set-resources add_brownfield:cpus_per_task=1 \
             -- $targets </dev/null >\"$log\" 2>&1 & echo \$! >\"$pidf\"' </dev/null >/dev/null 2>&1"
     sleep 2
-    pid=$(ssh "$REMOTE" "cat '$REMOTE_DIR/$pidf' 2>/dev/null" | tr -d '[:space:]')
+    pid=$(rssh "cat '$REMOTE_DIR/$pidf' 2>/dev/null" | tr -d '[:space:]')
     echo "$sc $res ${pid:-unknown}" >> "$JOBFILE"
     msg "  orchestrator pid ${pid:-unknown} for $sc (log: $log)"
     msg "Track with: $0 status"
@@ -158,7 +170,7 @@ cmd_solve() {
 
 cmd_stop() {
     msg "Cancelling Slurm jobs and orchestrators on $REMOTE"
-    ssh "$REMOTE" "scancel -u \$(whoami) 2>/dev/null; pkill -f 'bin/snakemake --snakefile' 2>/dev/null || true"
+    rssh "scancel -u \$(whoami) 2>/dev/null; pkill -f 'bin/snakemake --snakefile' 2>/dev/null || true"
     msg "Stop signalled."
 }
 
@@ -166,7 +178,7 @@ cmd_stop() {
 #   ssh <node> "top -b -n 1 -u \$USER -H"
 # but scoped to each Slurm job via its cgroup).
 status_job_usage() {
-    ssh "$REMOTE" 'bash -s' <<'REMOTE'
+    rssh 'bash -s' <<'REMOTE'
 set -uo pipefail
 running=$(squeue --me -h -t RUNNING -o "%i|%N|%j|%C|%m" 2>/dev/null || true)
 if [ -z "$running" ]; then
@@ -179,7 +191,7 @@ while IFS='|' read -r jobid node name alloc_cpus alloc_mem; do
     short=${name:0:40}
     [ "$short" != "$name" ] && short="${short}..."
     echo "    name: $short"
-    if ssh -o ConnectTimeout=5 -o BatchMode=yes "$node" bash -s "$jobid" <<'NODE'
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes -o ForwardX11=no "$node" bash -s "$jobid" <<'NODE'
 jobid=$1
 mapfile -t job_pids < <(
     find /sys/fs/cgroup/memory/slurm -path "*job_${jobid}*" -name cgroup.procs \
@@ -201,20 +213,48 @@ if [ -z "$main_pid" ]; then
     exit 0
 fi
 echo "    process: pid=$main_pid ($main_comm), VmRSS=$((max_rss / 1024)) MiB"
-echo "    threads (top -b -n 1 -H -p $main_pid):"
+echo "    busiest threads (top -b -n 1 -H -p $main_pid, >=1% CPU, max 20):"
 printf "    %-10s %6s %6s %10s %5s %s\n" "TID" "%CPU" "%MEM" "RSS" "S" "COMMAND"
 top -b -n 1 -H -p "$main_pid" 2>/dev/null | awk '
     NR > 7 && $1 ~ /^[0-9]+$/ {
-        printf "    %-10s %6s %6s %10s %5s %s\n", $1, $9, $10, $6, $8, $12
-        cpu += $9 + 0
-        n++
+        tid[n] = $1
+        cpupct[n] = $9 + 0
+        mempct[n] = $10
+        rss[n] = $6
+        st[n] = $8
+        cmd[n] = $12
+        cpu += cpupct[n]
         if ($8 == "R") r++
+        n++
     }
     END {
-        if (n > 0) {
-            cores = cpu / 100
-            printf "    summary: %d thread(s) (%d running), sum %%CPU=%.1f (~%.1f cores)\n", n, r + 0, cpu, cores
+        if (n == 0) exit
+        for (i = 0; i < n; i++) order[i] = i
+        for (i = 0; i < n - 1; i++) {
+            for (j = i + 1; j < n; j++) {
+                if (cpupct[order[j]] > cpupct[order[i]]) {
+                    t = order[i]; order[i] = order[j]; order[j] = t
+                }
+            }
         }
+        shown = 0
+        for (i = 0; i < n; i++) {
+            k = order[i]
+            if (cpupct[k] < 1.0) break
+            if (shown >= 20) break
+            printf "    %-10s %6s %6s %10s %5s %s\n", tid[k], cpupct[k], mempct[k], rss[k], st[k], cmd[k]
+            shown++
+        }
+        if (shown == 0) {
+            limit = (n < 20 ? n : 20)
+            for (i = 0; i < limit; i++) {
+                k = order[i]
+                printf "    %-10s %6s %6s %10s %5s %s\n", tid[k], cpupct[k], mempct[k], rss[k], st[k], cmd[k]
+            }
+            shown = limit
+        }
+        cores = cpu / 100
+        printf "    summary: %d thread(s) total (%d running), showing %d busiest, sum %%CPU=%.1f (~%.1f cores)\n", n, r + 0, shown, cpu, cores
     }'
 NODE
     then
@@ -228,19 +268,25 @@ REMOTE
 
 cmd_status() {
     msg "Slurm queue on $REMOTE (squeue --me):"
-    ssh "$REMOTE" "squeue --me --format='%.18i %.10P %.26j %.8T %.10M %R'" 2>/dev/null
+    rssh "squeue --me --format='%.18i %.10P %.26j %.8T %.10M %R'" 2>/dev/null
     echo
     msg "Live CPU / memory per thread (top -H on compute nodes):"
     status_job_usage
     [ -f "$JOBFILE" ] || return 0
     while read -r sc res pid; do
         echo
-        if ssh "$REMOTE" "kill -0 $pid" 2>/dev/null; then
+        if rssh "kill -0 $pid" 2>/dev/null; then
             msg "--- orchestrator $sc (pid $pid: RUNNING) ---"
         else
             msg "--- orchestrator $sc (pid $pid: finished) ---"
         fi
-        ssh "$REMOTE" "grep -vE 'Lmod|Try: |module\(s\)|Python/3.7.4' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log' 2>/dev/null | tail -n 12 || echo '(no log yet)'"
+        rssh "grep -vE 'Lmod|Try: |module\(s\)|Python/3.7.4' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log' 2>/dev/null | tail -n 12 || echo '(no log yet)'"
+        slurm_log=$(rssh "grep -oE 'log: [^)]+' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log' 2>/dev/null | tail -1 | sed 's/^log: //'" | tr -d '\r')
+        if [ -n "$slurm_log" ]; then
+            echo
+            msg "--- Slurm job log (last 20 lines): $slurm_log ---"
+            rssh "tail -n 20 '$slurm_log' 2>/dev/null || echo '(log not found)'"
+        fi
     done < "$JOBFILE"
 }
 
@@ -250,7 +296,7 @@ cmd_wait() {
     while true; do
         local alive=0
         while read -r sc res pid; do
-            ssh "$REMOTE" "kill -0 $pid" 2>/dev/null && alive=$((alive+1))
+            rssh "kill -0 $pid" 2>/dev/null && alive=$((alive+1))
         done < "$JOBFILE"
         [ "$alive" -eq 0 ] && break
         printf '\r[nic5] %s orchestrator(s) still running... %s' "$alive" "$(date +%H:%M:%S)"
@@ -259,7 +305,7 @@ cmd_wait() {
     printf '\n'
     msg "All orchestrators finished. Per-scenario outcome:"
     while read -r sc res pid; do
-        if ssh "$REMOTE" "grep -qE 'Nothing to be done|steps \(100%\) done|Complete log' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log'" 2>/dev/null; then
+        if rssh "grep -qE 'Nothing to be done|steps \(100%\) done|Complete log' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log'" 2>/dev/null; then
             msg "  $sc: OK"
         else
             msg "  $sc: CHECK LOG (cluster/logs/orchestrate_${sc}_${res}.log) -- may have errors"
@@ -270,20 +316,20 @@ cmd_wait() {
 cmd_pull() {
     msg "Pulling results + logs from cluster"
     mkdir -p "$REPO/results" "$HERE/logs"
-    rsync -arh --no-g --info=progress2 -e ssh \
+    rssync -arh --no-g --info=progress2 \
         "${REMOTE}:${REMOTE_DIR}/results/" "$REPO/results/" \
         || msg "(no results dir yet)"
-    rsync -arh --no-g -e ssh \
+    rssync -arh --no-g \
         "${REMOTE}:${REMOTE_DIR}/cluster/logs/" "$HERE/logs/" || true
     msg "Pull complete. Solved networks are in results/<scenario>/networks/."
 }
 
 cmd_setup() {
     msg "One-time cluster setup on $REMOTE"
-    ssh "$REMOTE" "mkdir -p '$REMOTE_DIR'"
-    rsync -arh --no-g -e ssh "$HERE/cluster_setup.sh" "${REMOTE}:${REMOTE_DIR}/cluster/cluster_setup.sh"
-    rsync -arh --no-g -e ssh "$REPO/envs/environment.yaml" "${REMOTE}:${REMOTE_DIR}/envs/environment.yaml"
-    ssh "$REMOTE" "bash '$REMOTE_DIR/cluster/cluster_setup.sh'"
+    rssh "mkdir -p '$REMOTE_DIR'"
+    rssync -arh --no-g "$HERE/cluster_setup.sh" "${REMOTE}:${REMOTE_DIR}/cluster/cluster_setup.sh"
+    rssync -arh --no-g "$REPO/envs/environment.yaml" "${REMOTE}:${REMOTE_DIR}/envs/environment.yaml"
+    rssh "bash '$REMOTE_DIR/cluster/cluster_setup.sh'"
     msg "Setup finished."
 }
 
@@ -298,7 +344,7 @@ cmd_run() {
     cmd_pull
 }
 
-cmd_shell() { ssh -t "$REMOTE" "cd '$REMOTE_DIR'; exec bash -l"; }
+cmd_shell() { ssh $SSH_OPTS -t "$REMOTE" "cd '$REMOTE_DIR'; exec bash -l"; }
 
 case "${1:-}" in
     setup)   shift; cmd_setup "$@";;

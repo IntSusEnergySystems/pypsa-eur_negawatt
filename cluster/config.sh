@@ -8,6 +8,10 @@ REMOTE="${REMOTE:-nic5}"
 # Working directory on the cluster (use GLOBALSCRATCH, NOT $HOME).
 REMOTE_DIR="${REMOTE_DIR:-/scratch/ulg/thermlab/squoilin/pypsa-eur_negawatt}"
 
+# Cluster workflow is headless. Override ~/.ssh/config ForwardX11=yes to avoid
+# "No xauth data" warnings without loading modules or setting up xauth.
+SSH_OPTS="${SSH_OPTS:--o ForwardX11=no}"
+
 # --- conda environment on the cluster ---------------------------------------
 CONDA_ROOT="${CONDA_ROOT:-\$HOME/miniforge3}"   # installed by `nic5.sh setup`
 ENV_NAME="${ENV_NAME:-pypsa-eur}"
@@ -19,12 +23,11 @@ GUROBI_LIC="${GUROBI_LIC:-\$HOME/gurobi.lic}"
 GUROBI_MODULE_LIC="${GUROBI_MODULE_LIC:-/opt/cecisw/arch/easybuild/2023b/software/Gurobi/13.0.0-GCCcore-13.2.0/gurobi.lic}"
 
 # --- Slurm resources --------------------------------------------------------
-# Snakemake runs on the login node and submits each rule to Slurm. See the
-# README section on job efficiency: Slurm --cpus-per-task MUST match Gurobi
-# threads (solving.solver_options.gurobi-numeric-focus.threads = 20).
+# Snakemake runs on the login node and submits each rule to Slurm. Solve-job
+# CPUs and Gurobi threads are set in cluster/config_cluster.yaml (solving.cpus
+# and matching solver_options threads). See the README job-efficiency section:
 # https://support.ceci-hpc.be/doc/SubmittingJobs/JobEfficiency/
 SOLVE_PARTITION="${SOLVE_PARTITION:-hmem}"
-SOLVE_CPUS="${SOLVE_CPUS:-20}"           # = gurobi-numeric-focus threads
 SOLVE_RUNTIME="${SOLVE_RUNTIME:-1440}"   # minutes
 DEFAULT_PARTITION="${DEFAULT_PARTITION:-hmem}"   # all cluster jobs use hmem
 DEFAULT_MEM_MB="${DEFAULT_MEM_MB:-16000}"      # light rules (add_brownfield)

@@ -91,3 +91,4 @@ CLAUDE.local.md
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+cluster/.last_jobs

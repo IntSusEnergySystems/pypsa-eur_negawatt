@@ -240,16 +240,11 @@ CECI expects Slurm allocations to match what the job actually uses — see the
 
 | What | Value | Why |
 |------|-------|-----|
-| Slurm `--cpus-per-task` | **20** | Must equal `solving.solver_options.gurobi-numeric-focus.threads` in `config/config_*.yaml`. Requesting fewer CPUs (e.g. 8) while Gurobi spawns 20 threads causes oversubscription and poor CPU utilisation. |
-| Slurm memory | **200 GB** | Observed ~145 GB for 1 h solves; set in `cluster/config_cluster.yaml` (do not over-reserve 900 GB). |
+| Slurm `--cpus-per-task` | **20** | Set via `solving.cpus` in [`cluster/config_cluster.yaml`](cluster/config_cluster.yaml); the same file overrides `gurobi-numeric-focus.threads` on the cluster only. Must match Gurobi thread count (CECI [job efficiency](https://support.ceci-hpc.be/doc/SubmittingJobs/JobEfficiency/)). |
+| Slurm memory | **500 GB** | Set via `solving.mem_mb` in `cluster/config_cluster.yaml` (local configs keep their own values). |
 | Partition | **`hmem`** | Memory-heavy LP solve |
 
-These are applied automatically by `./cluster/nic5.sh solve <scenario>`. To change them,
-edit [`cluster/config.sh`](cluster/config.sh) (`SOLVE_CPUS`, `SOLVE_PARTITION`)
-and [`cluster/config_cluster.yaml`](cluster/config_cluster.yaml) (`solving.mem_mb`).
-
-If you change the Gurobi thread count in the YAML configs, update `SOLVE_CPUS`
-to the same value.
+These are applied automatically by `./cluster/nic5.sh solve <scenario>`. To change solve CPUs or memory, edit [`cluster/config_cluster.yaml`](cluster/config_cluster.yaml) (`solving.cpus`, `solving.mem_mb`). Slurm partition and runtime defaults live in [`cluster/config.sh`](cluster/config.sh).
 
 To cancel a run in progress: `./cluster/nic5.sh stop`
 
