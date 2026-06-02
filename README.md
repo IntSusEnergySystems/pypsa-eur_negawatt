@@ -124,32 +124,26 @@ variable accordingly.
 > from incorrectly reporting infeasibility before solving.
 
 ## Running the Workflow
+```bash
+conda activate pypsa-eur
+```
 
 ### Reference scenario
 
 ```bash
-conda run -n pypsa-eur snakemake \
-    --snakefile Snakefile_ref \
-    --cores 20 \
-    -call
+snakemake --snakefile Snakefile_ref --cores 20 -call
 ```
 
 ### Sufficiency scenario
 
 ```bash
-conda run -n pypsa-eur snakemake \
-    --snakefile Snakefile_suff \
-    --cores 20 \
-    -call
+snakemake --snakefile Snakefile_suff --cores 20 -call
 ```
 
 ### Dry run (check what would be executed)
 
 ```bash
-conda run -n pypsa-eur snakemake \
-    --snakefile Snakefile_ref \
-    --cores 20 \
-    -n
+snakemake --snakefile Snakefile_ref --cores 20 -n
 ```
 
 ### Reducing runtime for testing
@@ -227,11 +221,22 @@ Configure your SSH host and scratch path at the top of
 | `./cluster/nic5.sh status`     | shows `squeue`, **live per-thread CPU/RSS** on compute nodes (`top -H`, scoped per Slurm job), and tails orchestrator logs |
 | `./cluster/nic5.sh wait`       | blocks until the orchestrators recorded in `.last_jobs` finish |
 | `./cluster/nic5.sh pull`       | `rsync`s the solved `results/` (and logs) back |
+| `./cluster/nic5.sh postprocess ref 6h` | **local**: `--touch` solve outputs, then `prepare_results` (see warning below) |
 | `./cluster/nic5.sh shell`      | opens an interactive shell in the cluster repo |
 
 `./cluster/nic5.sh solve all 1h` is reserved but **not supported yet**: `ref` and `suff` share the same cluster checkout and `.snakemake/` state, so concurrent orchestrators can interfere. Run them separately as above.
 
-Any resolution works the same way, e.g. `./cluster/nic5.sh run ref 6h`.
+Any resolution works the same way, e.g. `./cluster/nic5.sh run ref 6h` (includes `postprocess` after `pull`).
+
+### Post-processing after pull
+
+Run `./cluster/nic5.sh postprocess <scenario> <resolution>` locally once cluster results are pulled (same arguments as `solve`). The script:
+
+1. Aligns local brownfield file timestamps with the pulled solved networks (so the myopic chain is not rebuilt).
+2. Runs Snakemake with **`--touch`** on the solve outputs so Snakemake treats the cluster `.nc` files as up to date **without** re-running Gurobi.
+3. Runs the **`prepare_results`** rule (and its Snakemake dependencies) to rebuild SEPIA HTML/Excel summaries and related artefacts.
+
+> **Warning — `--touch`**: This only updates modification times and tells Snakemake the solve step is complete; it does **not** verify file contents. Use it only after a successful cluster solve and `pull`. Never combine this step with `--forcerun` on `solve_sector_network_myopic` or `add_brownfield`, or Snakemake will re-execute those rules and **overwrite** your pulled networks. The `postprocess` resolution must match the cluster solve (e.g. `6h` vs `1h`).
 
 ### Slurm resource settings (job efficiency)
 

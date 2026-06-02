@@ -16,6 +16,7 @@ gurobi.log
 *.orig
 .idea
 
+cluster/.postprocess_sector_opts.yaml
 /bak
 /resources
 /resources*
@@ -92,3 +93,4 @@ CLAUDE.local.md
 .pixi/*
 !.pixi/config.toml
 cluster/.last_jobs
+cluster/logs/*
