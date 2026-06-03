@@ -56,6 +56,12 @@ cluster_cpus() {
     awk '/^solving:/{s=1} s && /^  cpus:/{print $NF; exit}' "$HERE/config_cluster.yaml"
 }
 
+# Require <scenario> <resolution> (avoid ${var:?...1h} — bash parses 1h as $1 + h).
+require_scenario_res() {
+    local cmd=$1
+    [ -n "${2:-}" ] && [ -n "${3:-}" ] || die "usage: $cmd <scenario> <resolution>  (e.g. $cmd ref 6h)"
+}
+
 # Validate scenario argument for solve/run. "all" is reserved but not supported yet.
 resolve_scenario() {
     case "${1:-}" in
@@ -98,7 +104,8 @@ scenario:
 EOF
 }
 
-# Align brownfield mtimes with pulled solves so add_brownfield / solve are not re-triggered.
+# Align brownfield mtimes with pulled solves when the brownfield file exists locally.
+# (2040/2050 brownfield are built on the cluster only and are not rsync'd by pull.)
 sync_brownfield_mtimestamps() {
     local sc=$1 res=$2 y bf sol
     for y in $HORIZONS; do
@@ -108,6 +115,45 @@ sync_brownfield_mtimestamps() {
             touch -r "$REPO/$sol" "$REPO/$bf"
         fi
     done
+}
+
+# Check cluster solve + local artefacts after a run (used by run/wait and documented in README).
+verify_run_success() {
+    local sc=$1 res=$2 y t ok=0 log="$HERE/logs/orchestrate_${sc}_${res}.log"
+    msg "Verifying run for '$sc' @ $res"
+    if [ -f "$log" ] && grep -qE 'steps \(100%\) done|Complete log' "$log"; then
+        msg "  cluster orchestrator: OK ($log)"
+    else
+        warn "  cluster orchestrator: CHECK $log"
+        ok=1
+    fi
+    for y in $HORIZONS; do
+        t="results/${sc}/networks/base_s_${CLUSTERS}_${OPTS}_${res}_${y}.nc"
+        if [ -f "$REPO/$t" ]; then
+            msg "  solved network $y: OK ($(du -h "$REPO/$t" | awk '{print $1}'))"
+        else
+            warn "  solved network $y: MISSING ($t)"
+            ok=1
+        fi
+        t="results/${sc}/logs/base_s_${CLUSTERS}_${OPTS}_${res}_${y}_solver.log"
+        if [ -f "$REPO/$t" ] && grep -q 'Optimal objective' "$REPO/$t"; then
+            msg "  solver log $y: OK (optimal)"
+        elif [ -f "$REPO/$t" ]; then
+            warn "  solver log $y: CHECK $t (no 'Optimal objective' line)"
+            ok=1
+        else
+            warn "  solver log $y: MISSING ($t)"
+            ok=1
+        fi
+    done
+    log="$HERE/logs/postprocess_${sc}_${res}.log"
+    if [ -f "$log" ] && grep -qE 'prepare_results|steps \(100%\) done|Nothing to be done' "$log"; then
+        msg "  postprocess: OK ($log)"
+    else
+        warn "  postprocess: not completed — run: $0 postprocess $sc $res"
+        ok=1
+    fi
+    return "$ok"
 }
 
 # Build the list of LOCAL prepare targets (un-solved solve inputs) for a scenario.
@@ -131,9 +177,11 @@ cmd_prepare() {
     local sc_filter="" res
     if [ "${1:-}" = ref ] || [ "${1:-}" = suff ]; then
         sc_filter=$1
-        res=${2:?usage: prepare [scenario] <resolution e.g. 1h>}
+        [ -n "${2:-}" ] || die "usage: prepare [scenario] <resolution>  (e.g. prepare ref 1h)"
+        res=$2
     else
-        res=${1:?usage: prepare [scenario] <resolution e.g. 1h>}
+        [ -n "${1:-}" ] || die "usage: prepare [scenario] <resolution>  (e.g. prepare ref 1h)"
+        res=$1
     fi
     local scenarios targets log
     if [ -n "$sc_filter" ]; then
@@ -189,8 +237,9 @@ REMOTE_ENV='source $HOME/miniforge3/etc/profile.d/conda.sh && conda activate '"$
 
 cmd_solve() {
     local sc res solve_cpus
-    sc=$(resolve_scenario "${1:?usage: solve <scenario> <resolution>  e.g. solve ref 1h}")
-    res=${2:?usage: solve <scenario> <resolution>  e.g. solve ref 1h}
+    require_scenario_res solve "$@"
+    sc=$(resolve_scenario "$1")
+    res=$2
     solve_cpus=$(cluster_cpus)
     [ -n "$solve_cpus" ] || die "solving.cpus not set in cluster/config_cluster.yaml"
     : > "$JOBFILE"
@@ -325,15 +374,16 @@ cmd_status() {
     msg "Live CPU / memory per thread (top -H on compute nodes):"
     status_job_usage
     [ -f "$JOBFILE" ] || return 0
-    while read -r sc res pid; do
+    local job_sc job_res job_pid
+    while read -r job_sc job_res job_pid; do
         echo
-        if rssh "kill -0 $pid" 2>/dev/null; then
-            msg "--- orchestrator $sc (pid $pid: RUNNING) ---"
+        if rssh "kill -0 $job_pid" 2>/dev/null; then
+            msg "--- orchestrator $job_sc (pid $job_pid: RUNNING) ---"
         else
-            msg "--- orchestrator $sc (pid $pid: finished) ---"
+            msg "--- orchestrator $job_sc (pid $job_pid: finished) ---"
         fi
-        rssh "grep -vE 'Lmod|Try: |module\(s\)|Python/3.7.4' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log' 2>/dev/null | tail -n 12 || echo '(no log yet)'"
-        slurm_log=$(rssh "grep -oE 'log: [^)]+' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log' 2>/dev/null | tail -1 | sed 's/^log: //'" | tr -d '\r')
+        rssh "grep -vE 'Lmod|Try: |module\(s\)|Python/3.7.4' '$REMOTE_DIR/cluster/logs/orchestrate_${job_sc}_${job_res}.log' 2>/dev/null | tail -n 12 || echo '(no log yet)'"
+        slurm_log=$(rssh "grep -oE 'log: [^)]+' '$REMOTE_DIR/cluster/logs/orchestrate_${job_sc}_${job_res}.log' 2>/dev/null | tail -1 | sed 's/^log: //'" | tr -d '\r')
         if [ -n "$slurm_log" ]; then
             echo
             msg "--- Slurm job log (last 20 lines): $slurm_log ---"
@@ -345,10 +395,11 @@ cmd_status() {
 cmd_wait() {
     [ -f "$JOBFILE" ] || die "no orchestrators recorded ($JOBFILE missing)"
     msg "Waiting for orchestrators to finish..."
+    local job_sc job_res job_pid
     while true; do
         local alive=0
-        while read -r sc res pid; do
-            rssh "kill -0 $pid" 2>/dev/null && alive=$((alive+1))
+        while read -r job_sc job_res job_pid; do
+            rssh "kill -0 $job_pid" 2>/dev/null && alive=$((alive+1))
         done < "$JOBFILE"
         [ "$alive" -eq 0 ] && break
         printf '\r[nic5] %s orchestrator(s) still running... %s' "$alive" "$(date +%H:%M:%S)"
@@ -356,11 +407,11 @@ cmd_wait() {
     done
     printf '\n'
     msg "All orchestrators finished. Per-scenario outcome:"
-    while read -r sc res pid; do
-        if rssh "grep -qE 'Nothing to be done|steps \(100%\) done|Complete log' '$REMOTE_DIR/cluster/logs/orchestrate_${sc}_${res}.log'" 2>/dev/null; then
-            msg "  $sc: OK"
+    while read -r job_sc job_res job_pid; do
+        if rssh "grep -qE 'Nothing to be done|steps \(100%\) done|Complete log' '$REMOTE_DIR/cluster/logs/orchestrate_${job_sc}_${job_res}.log'" 2>/dev/null; then
+            msg "  $job_sc: OK"
         else
-            msg "  $sc: CHECK LOG (cluster/logs/orchestrate_${sc}_${res}.log) -- may have errors"
+            msg "  $job_sc: CHECK LOG (cluster/logs/orchestrate_${job_sc}_${job_res}.log) -- may have errors"
         fi
     done < "$JOBFILE"
 }
@@ -377,9 +428,10 @@ cmd_pull() {
 }
 
 cmd_postprocess() {
+    require_scenario_res postprocess "$@"
     local sc res touch_targets log
-    sc=$(resolve_scenario "${1:?usage: postprocess <scenario> <resolution>  e.g. postprocess ref 6h}")
-    res=${2:?usage: postprocess <scenario> <resolution>  e.g. postprocess ref 6h}
+    sc=$(resolve_scenario "$1")
+    res=$2
 
     warn "postprocess runs LOCALLY after pull. Scenario=$sc resolution=$res must match the cluster solve."
     warn "Step 1 uses Snakemake --touch: output files are marked up to date WITHOUT running their commands."
@@ -394,10 +446,11 @@ cmd_postprocess() {
 
     sync_brownfield_mtimestamps "$sc" "$res"
     write_postprocess_config "$res"
-    touch_targets=$(printf '%s\n' $(solved_targets "$sc" "$res") $(brownfield_targets "$sc" "$res") | tr '\n' ' ')
+    touch_targets=$(solved_targets "$sc" "$res" | tr '\n' ' ')
     log="$HERE/logs/postprocess_${sc}_${res}.log"
 
-    msg "Touching solve-chain outputs (Snakemake --touch) for $sc @ $res"
+    msg "Touching solved networks only (Snakemake --touch) for $sc @ $res"
+    warn "  brownfield files for 2040/2050 are not pulled from the cluster — do not --touch them (Snakemake would re-run solve)."
     # shellcheck disable=SC2086
     ( cd "$REPO" && $LOCAL_RUN snakemake \
         --snakefile "Snakefile_${sc}" \
@@ -407,13 +460,14 @@ cmd_postprocess() {
         --touch \
         -- $touch_targets ) 2>&1 | tee "$log"
 
-    msg "Running prepare_results and its post-processing dependencies for $sc @ $res"
+    msg "Running prepare_results (SEPIA HTML/Excel) for $sc @ $res"
+    # shellcheck disable=SC2086
     ( cd "$REPO" && $LOCAL_RUN snakemake \
         --snakefile "Snakefile_${sc}" \
         --cores "$LOCAL_CORES" \
         --rerun-triggers mtime \
         --configfile "$POSTPROCESS_CONFIG" \
-        -R prepare_results ) 2>&1 | tee -a "$log"
+        -- prepare_results ) 2>&1 | tee -a "$log"
 
     msg "Post-processing complete (log: $log)."
 }
@@ -428,15 +482,17 @@ cmd_setup() {
 }
 
 cmd_run() {
+    require_scenario_res run "$@"
     local sc res
-    sc=$(resolve_scenario "${1:?usage: run <scenario> <resolution>  e.g. run ref 1h}")
-    res=${2:?usage: run <scenario> <resolution>  e.g. run ref 1h}
+    sc=$(resolve_scenario "$1")
+    res=$2
     cmd_prepare "$sc" "$res"
     cmd_push
     cmd_solve "$sc" "$res"
     cmd_wait
     cmd_pull
     cmd_postprocess "$sc" "$res"
+    verify_run_success "$sc" "$res" || warn "Run finished with verification warnings (see messages above)."
 }
 
 cmd_shell() { ssh $SSH_OPTS -t "$REMOTE" "cd '$REMOTE_DIR'; exec bash -l"; }

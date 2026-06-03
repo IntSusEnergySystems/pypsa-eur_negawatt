@@ -237,13 +237,59 @@ Any resolution works the same way, e.g. `./cluster/nic5.sh run ref 6h` (includes
 
 ### Post-processing after pull
 
-Run `./cluster/nic5.sh postprocess <scenario> <resolution>` locally once cluster results are pulled (same arguments as `solve`). The script:
+`./cluster/nic5.sh run` calls `postprocess` automatically after `pull`. If HTML
+files were not updated, run it manually:
 
-1. Aligns local brownfield file timestamps with the pulled solved networks (so the myopic chain is not rebuilt).
-2. Runs Snakemake with **`--touch`** on the solve outputs so Snakemake treats the cluster `.nc` files as up to date **without** re-running Gurobi.
-3. Runs the **`prepare_results`** rule (and its Snakemake dependencies) to rebuild SEPIA HTML/Excel summaries and related artefacts.
+```bash
+./cluster/nic5.sh postprocess ref 1h
+```
 
-> **Warning — `--touch`**: This only updates modification times and tells Snakemake the solve step is complete; it does **not** verify file contents. Use it only after a successful cluster solve and `pull`. Never combine this step with `--forcerun` on `solve_sector_network_myopic` or `add_brownfield`, or Snakemake will re-execute those rules and **overwrite** your pulled networks. The `postprocess` resolution must match the cluster solve (e.g. `6h` vs `1h`).
+The script:
+
+1. Writes `cluster/.postprocess_sector_opts.yaml` so `sector_opts` matches the
+   cluster resolution (must match `solve` / `pull`).
+2. Aligns local **2030** brownfield mtimes with pulled solves when that file
+   exists (2040/2050 brownfield stay on the cluster only).
+3. Runs Snakemake **`--touch`** on the three solved `results/.../networks/*.nc`
+   files only (not brownfield — missing brownfield would make Snakemake re-run
+   `add_brownfield` / Gurobi locally).
+4. Runs the **`prepare_results`** target to rebuild SEPIA HTML/Excel under
+   `results/<scenario>/htmls/`.
+
+> **Warning — `--touch`**: This only updates modification times; it does **not**
+> verify file contents. Use only after a successful cluster solve and `pull`.
+> Never add `--forcerun` on solve rules. The postprocess resolution must match
+> the cluster solve (e.g. `6h` vs `1h`).
+
+### Checking that a run succeeded
+
+After `./cluster/nic5.sh run ref 1h` (or individual steps), check:
+
+| Check | What to look for |
+|-------|------------------|
+| Cluster solve | `cluster/logs/orchestrate_ref_1h.log` ends with `5 of 5 steps (100%) done` and `Complete log` |
+| Solved networks | `results/ref/networks/base_s_adm__1h_{2030,2040,2050}.nc` exist (~160–190 MB each) |
+| Gurobi optimality | `grep 'Optimal objective' results/ref/logs/base_s_adm__1h_*_solver.log` (three lines) |
+| Postprocess | `cluster/logs/postprocess_ref_1h.log` contains `prepare_results` finishing; HTML mtimes in `results/ref/htmls/` match the run |
+| Prepare (local) | `cluster/logs/prepare_ref_1h.log` |
+
+Quick commands:
+
+```bash
+grep -E 'steps \(100%\) done|Complete log' cluster/logs/orchestrate_ref_1h.log
+ls -lh results/ref/networks/base_s_adm__1h_*.nc
+grep 'Optimal objective' results/ref/logs/base_s_adm__1h_*_solver.log
+ls -lt results/ref/htmls/*_ref.html | head
+```
+
+`./cluster/nic5.sh run` prints a short verification summary at the end (or warns
+if postprocess did not complete). If the run ends with a `usage: postprocess`
+error right after `pull`, the cluster solve may still have succeeded — re-run
+postprocess only:
+
+```bash
+./cluster/nic5.sh postprocess <scenario> <resolution>   # e.g. postprocess suff 1h
+```
 
 ### Slurm resource settings (job efficiency)
 
